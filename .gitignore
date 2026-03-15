@@ -1,0 +1,18 @@
+# 1. 忽略环境配置与密钥 (绝对不能传！)
+.env
+
+# 2. 忽略本地测试数据 (保留文件夹结构，但忽略里面的内容)
+data/inputs/*
+!data/inputs/.gitkeep
+data/outputs/*
+!data/outputs/.gitkeep
+data/prompt.txt
+
+# 3. Python 运行产生的缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 4. 操作系统产生的系统文件
+.DS_Store
+Thumbs.db
