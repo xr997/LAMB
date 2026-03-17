@@ -1,7 +1,7 @@
 import os
 from typing import List
 
-def get_supported_files(directory: str, supported_extensions: tuple = ('.txt', '.doc', '.docx')) -> List[str]:
+def get_supported_files(directory: str, supported_extensions: tuple = ('.txt', '.doc', '.docx','.pdf')) -> List[str]:
     """
     遍历指定目录，获取所有支持处理的文件路径。
     

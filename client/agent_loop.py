@@ -31,13 +31,16 @@ class AgentContext:
         self.model_name = "deepseek-chat"
         
         # 维护对话历史
+        # 维护对话历史 (加入严苛的思考与执行规范)
         self.messages: List[ChatCompletionMessageParam] = [
             {
                 "role": "system", 
                 "content": (
-                    "你是一个强大的自动化办公与文档处理 AI 助手。你可以理解用户的意图，"
-                    "并在需要时调用外部工具（Tools）来完成实际的批处理任务。"
-                    "当你调用工具后，请向用户简明扼要地总结工具的执行结果。"
+                    "你是一个严谨的自动化批处理 AI 智能体。你拥有调度底层工具的能力。\n"
+                    "【严格执行规范】\n"
+                    "1. 意图分析：在调用工具前，仔细分析用户诉求。如果是批改、信息汇总等需要合并为一张表的任务，务必向工具传入 task_mode='aggregation'。\n"
+                    "2. 严禁捏造：只允许调用你当前拥有的工具，绝对不允许捏造工具参数（如不存在的 mode）。\n"
+                    "3. 容错处理：如果工具返回了执行失败的报错，请用人类能看懂的语言向用户解释失败原因，不要暴露底层代码或特殊字符。"
                 )
             }
         ]
@@ -96,6 +99,19 @@ class AgentContext:
                         tool_name = tool_call.function.name
                         tool_args = json.loads(tool_call.function.arguments)
                         
+                        # ---> 【新增代码开始】在终端实时透传它的动作 <---
+                        # ---> 【修改代码开始】优化终端 UX 体验 <---
+                        from rich import print as rprint
+                        
+                        # 提取参数，转换为人类可读的话术
+                        target_dir = tool_args.get('input_dir', '未知目录')
+                        mode_text = "聚合统计 (多合一)" if tool_args.get('task_mode') == 'aggregation' else "一对一处理"
+                        
+                        rprint(f"\n[bold yellow]⚡ Agent 已接管任务，分配底层流水线...[/bold yellow]")
+                        rprint(f"[dim]📁 目标目录: {target_dir} | ⚙️ 模式: {mode_text}[/dim]")
+                        # ---> 【修改代码结束】 <---
+                        # ---> 【新增代码结束】 <---
+
                         # 核心动作：向 MCP Server 发起工具调用请求
                         try:
                             # 调用我们在 server/mcp_server.py 注册的函数

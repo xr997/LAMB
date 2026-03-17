@@ -1,99 +1,90 @@
-# 🚀 OmniBatch-LLM: 基于 MCP 协议的自动化文档处理智能体
+# 🚀 OmniBatch-LLM: 你的本地 AI 自动化批处理特工
 
 [![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Architecture: MCP](https://img.shields.io/badge/Architecture-MCP_Agent-purple.svg)](https://modelcontextprotocol.io/)
+[![Architecture: MCP Agent](https://img.shields.io/badge/Architecture-MCP_Agent-purple.svg)](https://modelcontextprotocol.io/)
 
-OmniBatch-LLM 是一个专为开发者和研究人员设计的高级文档批处理框架。**本项目原生采用了前沿的 Model Context Protocol (MCP) 架构**，将传统的静态批处理脚本升级为可通过自然语言驱动的 AI 智能体 (Agent)。
+还在手动给大模型网页端一个个喂文件？或者为了调 API 熬夜手写各种 PDF/Word 解析脚本？
 
-面对海量本地文档（如学术论文解析、自动化作业评估），您无需再编写繁琐的调度代码。只需在内置的极客终端中输入一句自然语言指令，系统的大脑（如 DeepSeek）便会自动拆解意图、寻址本地文件夹、调用底层的解析与生成工具，实现“感知-思考-执行-反馈”的全自动工作流。
+**OmniBatch-LLM** 是一个开箱即用的本地 AI 批处理框架。它完美填补了“网页端效率低下”与“纯写代码门槛过高”之间的空白。通过引入最前沿的 **MCP (Model Context Protocol) 智能体架构**，你只需在终端说一句话，它就能自动扫描你的本地文件夹、解析复杂文档、调度大模型完成批量任务，并生成排版精美的结构化报告。
 
-## 💡 核心应用场景
+**“Chat with your files” 已经落伍了，现在是 “Command your workflow” 的时代。**
 
-* **学术文献处理**：批量提取、清洗并分类数千篇学术会议论文的内容与核心摘要。
-* **自动化教育评估**：针对学生提交的海量 Word/TXT 作业，结合标准答案 Prompt 进行批量批改与结构化打分。
-* **语料库构建**：为 RAG（检索增强生成）系统或大模型微调自动化生成高质量的 QA 数据集。
+---
 
-## 🧩 核心架构亮点 (MCP Agent)
+## 🎯 为什么选择 OmniBatch-LLM？（直击痛点）
 
-本项目采用标准的 Client-Server 智能体分离架构：
+* ❌ **网页端 AI 的困境**：批量上传限制多、容易 Token 超限、输出结果只能手动复制粘贴，无法直接保存为原格式文件。
+* ❌ **手写 API 脚本的噩梦**：需要自己折腾 `python-docx` 和 `PyMuPDF`、处理各种文件损坏报错、手动拼接 Prompt，扩展性极差。
+* ✅ **OmniBatch 的终极解法**：
+  * **零代码解析**：内置工业级解析器，自动搞定 `.txt`, `.docx`, `.pdf` 的文字提取与清洗。
+  * **自然语言驱动**：无需修改代码，在极客风格的终端里用大白话下达指令（如：“帮我批改 inputs 文件夹里的作业”）。
+  * **自动持久化**：处理结果自动保存为独立的新 `.docx` 文件，或者聚合成一张 `.csv` Excel 表格。
 
-* **🧠 智能体大脑 (Client)**：内置基于 `rich` 构建的绚丽终端交互界面。使用 `asyncio` 实现异步 ReAct 循环，完美对接 DeepSeek/OpenAI 接口，将用户的自然语言实时转化为底层的 Tool Calling 指令。
-* **🛠️ 协议服务中枢 (Server)**：基于 FastMCP 暴露本地能力。大模型可通过 MCP 协议直接“看懂”并调用本地的批处理函数，实现跨进程的安全调度。
-* **👁️ 多格式解析器 (Parsers)**：内置 `txt` 和 `docx` 智能解析，支持一键读取包含表格的复杂 Word 文档。
-* **✍️ 自动化生成器 (Writers)**：支持将大模型的结构化输出原样重组并持久化为新的 `.docx` 或 `.txt` 报告。
+---
 
-## 🚀 快速上手 (Quickstart)
+## 🔥 核心杀手级场景
 
-### 1. 环境准备
-确保您的环境中已安装 Python 3.8+。克隆项目后，安装核心依赖：
+无论是学术研究还是日常办公，OmniBatch-LLM 都能为你节省 90% 的机械劳动时间：
+
+### 🎓 场景一：科研工作者的“超级学术助理”
+* **文献批量综述**：“提取这 20 篇 PDF 论文的核心创新点和实验 Baseline，汇总成一个表格。”
+* **Map-Reduce 级跨文献问答**：“综合阅读整个目录的文献，回答‘目前对激活向量的控制有哪些主流方法’，并强制标注引用来源。”
+* **单篇精读**：“帮我精读这篇长文，提炼作者的未来工作展望。”
+
+### 👩‍🏫 场景二：教育工作者的“自动化批改引擎”
+* **海量作业批改**：“根据我给定的标准，批改文件夹里的所有 Word 作业，给每份作业打分并写一句评语。”
+* 自动聚合结果至 `batch_report.csv`，告别手动登分的痛苦。
+
+### 💼 场景三：职场打工人的“效率外挂”
+* **简历批量筛选**：“从这批 PDF 简历中筛选出有 3 年以上 Python 经验的候选人，并提取他们的联系方式。”
+* **文档批量翻译/润色**：“把这些技术文档全部翻译成中文，保持专业术语准确，并存为新的 Word 文件。”
+
+---
+
+## 🧩 卓越的可扩展性 (Hackable Architecture)
+
+本项目并非一个封闭的黑盒，而是为开发者精心设计的模块化乐高：
+
+* **高度解耦的流水线**：分为 `Parsers` (解析), `Templates` (提示词组装), `LLM Engine` (网络请求), `Writers` (持久化输出) 四大独立模块。增加新格式支持只需 10 分钟。
+* **原生 MCP 支持**：底层核心逻辑已被封装为标准 MCP Tools (`server/mcp_server.py`)。你不仅可以使用自带的酷炫终端，还可以将其直接接入 Cursor 或 Claude Desktop！
+* **智能防崩溃机制**：遇到损坏或伪造后缀的文档（如假 `.docx`），底层会自动拦截并跳过，绝不中断整个批处理任务流。
+
+---
+
+## 🚀 3 分钟快速上手
+
+### 1. 安装与配置
+克隆项目并安装极其轻量的依赖（支持 Python 3.8+）：
 ```bash
 git clone [https://github.com/你的用户名/omnibatch-llm.git](https://github.com/你的用户名/omnibatch-llm.git)
 cd omnibatch-llm
 pip install -r requirements.txt
-# 安装终端 UI 依赖
-pip install rich mcp
-
 ```
 
-### 2. 配置密钥
-
-在项目根目录创建 `.env` 文件，并填入您的模型 API Key（默认配置为 DeepSeek）：
-
+在项目根目录新建 `.env` 文件，填入你的 API 密钥（默认完美兼容 DeepSeek 等极具性价比的模型）：
 ```env
 LLM_API_KEY=your_api_key_here
 LLM_BASE_URL=[https://api.deepseek.com](https://api.deepseek.com)
-
 ```
 
-### 3. 启动智能体控制台
-
-1. 将需要处理的文件（`.txt` 或 `.docx`）放入 `data/inputs/` 目录。
-2. 启动交互式终端：
-
+### 2. 启动智能终端
+只需将待处理文件扔进 `data/inputs` 文件夹，然后运行：
 ```bash
 python client/terminal_ui.py
-
 ```
 
-3. 在控制台中输入您的自然语言指令，例如：
+### 3. 下达你的指令
+在弹出的高亮终端中，像吩咐人类助手一样输入指令：
+> *"提取 data/inputs 里面所有 PDF 文档的核心结论，并汇总成表格。"*
 
-> *"提取 data/inputs 里面所有文档的核心观点，用一句话总结。"*
-
----
-
-## 📝 更新日志 (Changelog)
-
-本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 规范。
-
-### [v0.2.0] - 2026-03-16 (MCP 架构全面升级)
-
-**🚀 Major (重大更新)**
-
-* **架构重构**：全面迁移至 Model Context Protocol (MCP) 架构，拆分 Client 与 Server 端。
-* **智能体终端**：新增 `client/terminal_ui.py`，采用 `rich` 库构建带有加载动画和 Markdown 渲染的极客控制台。
-* **工具封装**：重构原有核心逻辑至 `core/workflow.py`，并作为标准的 MCP Tool 注册至 `server/mcp_server.py`。
-* **动态意图识别**：彻底废弃静态的 `main.py` 脚本，现已支持 DeepSeek 动态识别用户意图并自动注入参数执行批处理。
-
-### [v0.1.0] - 2026-03-15 (MVP 初始发布)
-
-**🎉 Added (新增)**
-
-* 构建项目核心骨架：`core`, `parsers`, `templates`, `writers`, `utils`。
-* 支持 `.txt` 和 `.docx` 文档的自动化读写与大模型处理。
-
-### [Unreleased] (开发中/待发布)
-
-* **[Parsers]** 增加对 PDF 和 Markdown 文件的结构化解析插件。
-* **[Writers]** 增加基于 JSON Schema 的强制结构化输出与校验功能，方便导出为 Excel 报表。
-* **[Ecosystem]** 编写集成指南，支持将本项目的 Server 端直接接入 Cursor 或 Claude Desktop。
+端起咖啡，看着优美的进度条，等待结果出现在 `data/outputs` 文件夹中即可。
 
 ---
 
-## 🤝 参与贡献 (Contributing)
+## 🤝 参与贡献
+本项目正处于高速迭代期。如果你有好的想法（比如接入异步高并发调度、增加图片 OCR 支持），欢迎提交 Issue 或 Pull Request！我们期待与你一起打造最强的本地 AI 工具链。
 
-欢迎任何形式的贡献！无论是提交 Issue 报告 Bug、增加新的文件解析器插件，还是优化 Prompt 模板，我们都非常期待您的 Pull Request。
+## 📄 License
+MIT License.
 
-## 📄 开源协议 (License)
-
-本项目基于 [MIT License](https://www.google.com/search?q=LICENSE) 协议开源。

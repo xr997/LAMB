@@ -14,37 +14,48 @@ mcp = FastMCP("OmniBatch")
 # 2. 注册 Tool (工具/技能)
 # @mcp.tool() 装饰器会自动将下面这个 Python 函数转化为标准的 MCP Tool 接口。
 # 【关键】大模型就是通过阅读下面的函数名、类型注解和 docstring(多行注释) 来决定是否调用它的！
+# ... 保持其他引用不变 ...
+
 @mcp.tool()
-def auto_process_documents(input_dir: str, task_instruction: str) -> str:
+def auto_process_documents(input_dir: str, task_instruction: str, task_mode: str = "mapping") -> str:
     """
-    当用户需要批量处理本地文档、批量批改作业、或者对文件夹中的文件进行结构化信息提取时调用此工具。
+    当用户需要处理本地文档时调用此工具。
     
     Args:
-        input_dir: 包含待处理文件的本地目标文件夹绝对或相对路径（例如: "./data/inputs"）。
-        task_instruction: 用户期望大模型对这些文档执行的具体指令（例如: "批改作业并严格打分", "提取每篇论文的核心创新点"）。
-        
-    Returns:
-        一段包含处理成功数量、失败数量以及错误明细的执行报告。
+        input_dir: 包含待处理文件的本地目标文件夹路径。
+        task_instruction: 具体的执行指令。
+        task_mode: 任务模式。
+                   如果是"翻译"、"摘要"等需要逐个输出新文件的任务，必须传入 "mapping"。
+                   如果是"批改作业"、"信息抽取"等需要把所有结果汇总到一个 Excel 表格的任务，必须传入 "aggregation"。
     """
-    # 打印日志到标准错误输出 (stderr)，因为标准输出 (stdout) 被 MCP 的通信协议占用了
-    print(f"[Server 端日志] 收到大模型指令，开始执行任务: {task_instruction}", file=sys.stderr)
-    print(f"[Server 端日志] 目标文件夹: {input_dir}", file=sys.stderr)
+    print(f"[Server] 指令: {task_instruction} | 模式: {task_mode}", file=sys.stderr)
     
-    # 调用底层干活的 workflow
     try:
-        report = execute_batch_task(
+        return execute_batch_task(
             input_dir=input_dir,
             task_instruction=task_instruction,
-            output_dir="./data/outputs",  # 暂时硬编码输出路径，后续也可以作为参数暴露给大模型
-            output_format=".docx"
+            task_mode=task_mode
         )
-        print(f"[Server 端日志] 任务执行完毕，向大模型返回报告。", file=sys.stderr)
-        return report
     except Exception as e:
-        error_msg = f"工具执行发生致命错误: {str(e)}"
-        print(f"[Server 端日志] {error_msg}", file=sys.stderr)
-        return error_msg
+        return f"工具执行发生致命错误: {str(e)}"
+# 导入我们新写的函数
+from core.workflow import execute_batch_task, process_single_document, synthesize_multiple_papers
 
+# ...保留其他的 tools...
+
+@mcp.tool()
+def multi_paper_qa(input_dir: str, user_question: str) -> str:
+    """
+    当用户需要你基于整个文件夹里的“多篇论文”进行对比、总结、或回答特定问题时，调用此工具。
+    这是一个高级的高成本工具，它会先阅读所有文献，再进行综合解答。
+    
+    Args:
+        input_dir: 包含论文的目录路径（例如: "data/inputs"）。
+        user_question: 用户的核心问题或综述指令（例如: "各篇论文在数据预处理上有什么不同？"）。
+    """
+    print(f"[Server] 启动多文献 Map-Reduce 综合分析 | 目标问题: {user_question}", file=sys.stderr)
+    return synthesize_multiple_papers(input_dir, user_question)
+    
 if __name__ == "__main__":
     # 3. 启动服务器
     # transport='stdio' 表示通过标准输入/输出流与客户端(大模型)进行通信，这是 MCP 本地连接的标准做法
