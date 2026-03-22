@@ -1,23 +1,23 @@
 import os
 import json
+import sys
+import re
 from typing import Dict, Any
 
 from core.llm_engine import LLMEngine
 from parsers.txt_parser import TxtParser
 from parsers.docx_parser import DocxParser
+from parsers.pdf_parser import PdfParser
 from templates.prompt_loader import PromptLoader
 from writers.txt_writer import TxtWriter
 from writers.docx_writer import DocxWriter
-from writers.csv_writer import CsvWriter  # <--- [新增] 导入 CSV Writer
+from writers.csv_writer import CsvWriter
 from utils.file_ops import get_supported_files
-import sys  # <--- [新增] 导入 sys 用于实时向终端输出
-import re
-from zipfile import BadZipFile # <--- [新增] 用于捕获假 docx 文件报错
-from parsers.pdf_parser import PdfParser
+
 def execute_batch_task(
     input_dir: str, 
     task_instruction: str, 
-    task_mode: str = "mapping", # <--- [新增] 任务模式: "mapping" (1对1) 或 "aggregation" (多对1)
+    task_mode: str = "mapping", 
     output_dir: str = "./data/outputs", 
 ) -> str:
     """执行批量文档处理的核心工作流。"""
@@ -28,7 +28,7 @@ def execute_batch_task(
 
     # 针对聚合任务，我们需要强制大模型输出 JSON 格式，方便提取字段填入表格
     if task_mode == "aggregation":
-        dynamic_template = f"{task_instruction}\n\n请阅读以下文档，并严格以 JSON 格式输出结果（例如包含 '分数' 和 '评语' 字段）：\n<DOCUMENT>\n{{document_content}}\n</DOCUMENT>"
+        dynamic_template = f"{task_instruction}\n\n请阅读以下文档，并严格以 JSON 格式输出结果：\n<DOCUMENT>\n{{document_content}}\n</DOCUMENT>"
     else:
         dynamic_template = f"{task_instruction}\n\n请阅读并处理以下文档内容：\n<DOCUMENT>\n{{document_content}}\n</DOCUMENT>"
     
@@ -43,94 +43,124 @@ def execute_batch_task(
         return f"任务终止：在 {input_dir} 中未找到文档。"
 
     stats = {"total": len(files_to_process), "success": 0, "failed": 0, "errors": []}
-    
-    # [新增] 用于存储聚合任务的全局列表
     aggregated_results = []
 
     for file_path in files_to_process:
         filename = os.path.basename(file_path)
         ext = os.path.splitext(filename)[1].lower()
         
-        # [新增] 实时播报：正在阅读
         print(f"  📖 正在读取文件: {filename} ...", file=sys.stderr)
         
         try:
-            # 强拦截旧版 .doc 文件
-            
-
-            # ---> 【修改开始】增加对 PDF 的分流逻辑 <---
-            if ext == '.txt':
+            # 1. 强拦截旧版 .doc 文件
+            if ext == '.doc':
+                raise ValueError("不支持旧版二进制 .doc 格式，请将原文件另存为 .docx")
+            elif ext == '.txt':
                 parser = TxtParser()
             elif ext == '.docx':
                 parser = DocxParser()
             elif ext == '.pdf':
                 parser = PdfParser()
             else:
-                continue # 如果是其他奇奇怪怪的文件，直接跳过
+                continue # 跳过不支持的格式
 
+            # 2. 提取文本
             document_text = parser.extract_text(file_path)
             if not document_text:
                 raise ValueError("文件内容为空")
                 
-            # [新增] 实时播报：交由大模型处理
             print(f"  🧠 正在呼叫大模型分析: {filename} ...", file=sys.stderr)
                 
+            # 3. 组装 Prompt 并请求
             final_prompt = loader.build_prompt(document_content=document_text)
             result_text = engine.generate_response(prompt=final_prompt)
             
             if result_text.startswith("ERROR:"):
                 raise RuntimeError(f"API 请求失败: {result_text}")
 
-            # --- 核心分流逻辑 ---
+            # 4. 核心分流逻辑
             if task_mode == "aggregation":
-                json_match = re.search(r'\{[\s\S]*\}', result_text)
+                # 【强化版 JSON 提取】：去除可能存在的 markdown 标记
+                clean_text = result_text.strip()
+                if clean_text.startswith("```json"):
+                    clean_text = clean_text[7:]
+                if clean_text.startswith("```"):
+                    clean_text = clean_text[3:]
+                clean_text = clean_text.rstrip("`").strip()
+
+                json_match = re.search(r'\{[\s\S]*\}', clean_text)
                 if json_match:
-                    clean_json = json_match.group(0)
+                    extracted_str = json_match.group(0)
                     try:
-                        parsed_data = json.loads(clean_json)
+                        parsed_data = json.loads(extracted_str)
                         parsed_data["文件名"] = filename 
                         aggregated_results.append(parsed_data)
                         stats["success"] += 1
-                        # [新增] 实时播报：聚合成功
                         print(f"  ✅ 成功提取结构化数据: {filename}", file=sys.stderr)
                     except json.JSONDecodeError:
-                        raise ValueError("模型返回的内容无法被解析为合法 JSON")
+                        raise ValueError(f"JSON 解码失败。模型原输出片段: {extracted_str[:50]}...")
                 else:
-                    raise ValueError("模型未返回任何包含 JSON 结构的回复")
+                    raise ValueError("模型输出中未找到任何合法的 JSON 结构")
             
             else:
+                # Mapping 模式：直接保存为新文件
                 base_name = os.path.splitext(filename)[0]
                 output_path = os.path.join(output_dir, f"{base_name}_processed.docx")
                 success = DocxWriter().save_result(content=result_text, output_path=output_path)
                 if success:
                     stats["success"] += 1
-                    # [新增] 实时播报：保存成功
                     print(f"  ✅ 成功保存新文件: {base_name}_processed.docx", file=sys.stderr)
                 else:
                     raise IOError("文件保存失败")
                     
-        except BadZipFile:
-            stats["failed"] += 1
-            error_msg = f"文件损坏 (可能是直接修改后缀名导致的假 .docx)"
-            stats["errors"].append(f"{filename}: {error_msg}")
-            print(f"  ❌ 跳过 {filename}: {error_msg}", file=sys.stderr)
         except Exception as e:
             stats["failed"] += 1
             stats["errors"].append(f"{filename}: {str(e)}")
             print(f"  ❌ 处理 {filename} 失败: {str(e)}", file=sys.stderr)
-                    
-       
 
-    # 循环结束后，如果是聚合模式，一次性把所有数据写入表格
+    # 循环结束后，写入聚合 CSV
     if task_mode == "aggregation" and aggregated_results:
         csv_path = os.path.join(output_dir, "batch_report.csv")
         CsvWriter().save_result(content=aggregated_results, output_path=csv_path)
 
-    # 生成报告
     report = f"✅ 批量任务执行完毕。模式: {task_mode}\n📊 共发现 {stats['total']} 个文件，成功 {stats['success']} 个，失败 {stats['failed']} 个。"
     if stats["errors"]:
         report += "\n❌ 错误明细：\n" + "\n".join(f"  - {err}" for err in stats["errors"][:5])
     return report
+
+def process_single_document(file_path: str, task_instruction: str) -> str:
+    """处理并阅读单个文档，直接返回大模型的分析结果"""
+    if not os.path.exists(file_path):
+        return f"错误：找不到文件 {file_path}"
+        
+    filename = os.path.basename(file_path)
+    ext = os.path.splitext(filename)[1].lower()
+    
+    try:
+        if ext == '.txt':
+            parser = TxtParser()
+        elif ext in ['.doc', '.docx']:
+            parser = DocxParser()
+        elif ext == '.pdf':
+            parser = PdfParser()
+        else:
+            return f"错误：不支持的文件格式 {ext}"
+            
+        document_text = parser.extract_text(file_path)
+        if not document_text:
+            return "错误：提取到的文档内容为空"
+            
+        print(f"  🧠 正在呼叫大模型精读文件: {filename} ...", file=sys.stderr)
+        engine = LLMEngine()
+        loader = PromptLoader(default_template=f"{task_instruction}\n\n<DOCUMENT>\n{{document_content}}\n</DOCUMENT>")
+        
+        final_prompt = loader.build_prompt(document_content=document_text)
+        result_text = engine.generate_response(prompt=final_prompt)
+        
+        return f"📄 **《{filename}》的阅读结果：**\n\n{result_text}"
+        
+    except Exception as e:
+        return f"处理文件 {filename} 时发生错误: {str(e)}"
 
 def synthesize_multiple_papers(input_dir: str, user_question: str) -> str:
     """
@@ -154,7 +184,6 @@ def synthesize_multiple_papers(input_dir: str, user_question: str) -> str:
     # ----------------------------------------
     intermediate_summaries = []
     
-    # Map 阶段的 Prompt：极其关键的“目标前置”
     map_prompt_template = (
         "用户的核心问题是：【{user_question}】\n\n"
         "请阅读以下文献内容，提取所有能回答该问题的相关事实、数据或结论。\n"
@@ -171,22 +200,17 @@ def synthesize_multiple_papers(input_dir: str, user_question: str) -> str:
         try:
             if ext == '.txt': parser = TxtParser()
             elif ext in ['.doc', '.docx']: parser = DocxParser()
-            elif ext == '.pdf': 
-                from parsers.pdf_parser import PdfParser
-                parser = PdfParser()
+            elif ext == '.pdf': parser = PdfParser()
             else: continue
                 
             document_text = parser.extract_text(file_path)
             if not document_text: continue
             
-            # 组装单篇阅读 prompt
             loader.template = map_prompt_template
             map_prompt = loader.build_prompt(user_question=user_question, document_content=document_text)
             map_result = engine.generate_response(prompt=map_prompt)
             
-            # 过滤掉无关文献，保留有效信息的“中间态”
             if "无相关信息" not in map_result and "ERROR:" not in map_result:
-                # 强制溯源：绑定文件名
                 intermediate_summaries.append(f"### 来源文献：{filename}\n{map_result}\n")
                 print(f"    💡 发现线索: {filename}", file=sys.stderr)
                 
@@ -201,10 +225,8 @@ def synthesize_multiple_papers(input_dir: str, user_question: str) -> str:
 
     print(f"\n  [Reduce 阶段] 已收集到 {len(intermediate_summaries)} 篇文献的线索，正在进行跨文献综合推演...", file=sys.stderr)
     
-    # 将所有单篇总结拼接成一个大长文
     combined_context = "\n".join(intermediate_summaries)
     
-    # Reduce 阶段的 Prompt：强调跨文献对比和溯源
     reduce_prompt = (
         f"你是一个严谨的学术助理。你需要基于以下多篇文献的提取片段，回答用户的最终问题。\n\n"
         f"用户问题：【{user_question}】\n\n"
