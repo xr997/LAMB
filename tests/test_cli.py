@@ -37,6 +37,35 @@ class CliTests(unittest.TestCase):
                 )
             self.assertEqual(exit_code, 0)
 
+    def test_batch_accepts_include_hidden_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root / "inputs"
+            outputs = root / "outputs"
+            hidden = inputs / ".notes"
+            hidden.mkdir(parents=True)
+            (hidden / "note.txt").write_text("hidden note", encoding="utf-8")
+            stdout = StringIO()
+
+            with redirect_stdout(stdout), redirect_stderr(StringIO()):
+                exit_code = main(
+                    [
+                        "batch",
+                        str(inputs),
+                        "--instruction",
+                        "Summarize this note.",
+                        "--output-dir",
+                        str(outputs),
+                        "--format",
+                        "md",
+                        "--dry-run",
+                        "--include-hidden",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("succeeded: 1", stdout.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

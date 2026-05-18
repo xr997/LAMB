@@ -157,7 +157,7 @@ LAMB does not focus on transport-layer security. Its focus is **LLM application-
 - Prompt-injection signals are detected and recorded.
 - `--strict-security` skips high-risk documents.
 - `--redact` masks emails, phone numbers, API keys, tokens, and JWT-like strings.
-- Hidden files, `.env`, credential-like files, and symbolic links are skipped by default.
+- Hidden files are skipped by default and can be included explicitly with `--include-hidden`; `.env`, credential-like files, and symbolic links are still refused.
 - Every run writes an audit manifest with inputs, outputs, parameters, risk findings, failures, and elapsed time.
 
 Read more: [Security Model](docs/security-model.md)

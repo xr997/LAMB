@@ -88,6 +88,7 @@ def process_directory(
     llm_client: LLMClient | None = None,
     model_name: str | None = None,
     max_chars: int = 12000,
+    include_hidden: bool = False,
 ) -> BatchResult:
     """Process a directory in mapping or aggregation mode."""
 
@@ -110,6 +111,7 @@ def process_directory(
             llm_client=llm_client,
             model_name=model_name,
             max_chars=max_chars,
+            include_hidden=include_hidden,
         )
         files = extraction.files
         succeeded = sum(1 for result in files if result.success)
@@ -130,7 +132,7 @@ def process_directory(
     run_id = new_run_id("batch")
     timer = RunTimer()
     output_root = ensure_output_dir(output_dir)
-    records = scan_documents(input_dir)
+    records = scan_documents(input_dir, include_hidden=include_hidden)
     client = _resolve_client(llm_client, dry_run, model_name)
     results: List[FileResult] = []
     for record in records:
@@ -166,6 +168,7 @@ def process_directory(
             "strict_security": strict_security,
             "redact": redact,
             "max_chars": max_chars,
+            "include_hidden": include_hidden,
         },
         documents=records,
         results=[result.to_dict() for result in results],
@@ -204,13 +207,14 @@ def answer_over_directory(
     llm_client: LLMClient | None = None,
     model_name: str | None = None,
     max_chars: int = 12000,
+    include_hidden: bool = False,
 ) -> QAResult:
     """Answer a question over all supported documents in a directory."""
 
     run_id = new_run_id("research")
     timer = RunTimer()
     output_root = ensure_output_dir(output_dir)
-    records = scan_documents(input_dir)
+    records = scan_documents(input_dir, include_hidden=include_hidden)
     client = _resolve_client(llm_client, dry_run, model_name)
     detector = PromptInjectionDetector()
     redactor = SensitiveDataRedactor()
@@ -299,6 +303,7 @@ def answer_over_directory(
             "strict_security": strict_security,
             "redact": redact,
             "max_chars": max_chars,
+            "include_hidden": include_hidden,
         },
         documents=records,
         results=result_dicts,
@@ -338,6 +343,7 @@ def extract_fields(
     llm_client: LLMClient | None = None,
     model_name: str | None = None,
     max_chars: int = 12000,
+    include_hidden: bool = False,
 ) -> ExtractionResult:
     """Extract structured fields from each supported document."""
 
@@ -346,7 +352,7 @@ def extract_fields(
     run_id = new_run_id("extract")
     timer = RunTimer()
     output_root = ensure_output_dir(output_dir)
-    records = scan_documents(input_dir)
+    records = scan_documents(input_dir, include_hidden=include_hidden)
     client = _resolve_client(llm_client, dry_run, model_name)
     detector = PromptInjectionDetector()
     redactor = SensitiveDataRedactor()
@@ -416,6 +422,7 @@ def extract_fields(
             "strict_security": strict_security,
             "redact": redact,
             "max_chars": max_chars,
+            "include_hidden": include_hidden,
         },
         documents=records,
         results=result_dicts,
