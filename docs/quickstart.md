@@ -37,6 +37,14 @@ lamb scan data/inputs
 lamb research data/inputs --question "这些文档的共同结论是什么？" --dry-run
 ```
 
+Hidden files and folders are skipped by default. If your notes are intentionally stored under a hidden folder, opt in explicitly:
+
+```bash
+lamb batch data/inputs --instruction "请为这份隐藏笔记写摘要" --dry-run --include-hidden
+```
+
+Sensitive names such as `.env` are still refused even when hidden files are included.
+
 ## Common Workflows
 
 Batch summarize documents:

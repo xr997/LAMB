@@ -76,6 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _add_common_run_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output-dir", default="data/outputs")
     parser.add_argument("--dry-run", action="store_true", help="Preview the workflow without calling an LLM.")
+    parser.add_argument("--include-hidden", action="store_true", help="Include hidden files and folders. Sensitive names are still skipped.")
     parser.add_argument("--strict-security", action="store_true", help="Skip documents with high-risk prompt injection signals.")
     parser.add_argument("--redact", action="store_true", help="Redact common sensitive values before LLM processing.")
     parser.add_argument("--model", help="OpenAI-compatible model name. Overrides LLM_MODEL.")
@@ -112,6 +113,7 @@ def _cmd_research(args: argparse.Namespace) -> int:
         redact=args.redact,
         model_name=args.model,
         max_chars=args.max_chars,
+        include_hidden=args.include_hidden,
     )
     print(result.answer)
     print(f"\nreport: {result.report_path}")
@@ -131,6 +133,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         redact=args.redact,
         model_name=args.model,
         max_chars=args.max_chars,
+        include_hidden=args.include_hidden,
     )
     print(f"rows: {len(result.rows)}")
     print(f"output: {result.output_path}")
@@ -150,6 +153,7 @@ def _cmd_batch(args: argparse.Namespace) -> int:
         redact=args.redact,
         model_name=args.model,
         max_chars=args.max_chars,
+        include_hidden=args.include_hidden,
     )
     print(f"run_id: {result.run_id}")
     print(f"total: {result.total}, succeeded: {result.succeeded}, failed: {result.failed}, skipped: {result.skipped}")
