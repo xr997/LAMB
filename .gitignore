@@ -12,6 +12,12 @@ data/prompt.txt
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # 4. 操作系统产生的系统文件
 .DS_Store

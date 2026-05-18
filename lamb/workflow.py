@@ -1,0 +1,554 @@
+"""Public LAMB workflows for CLI and third-party programs."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Sequence
+
+from .chunking import estimate_tokens, split_text
+from .llm import DryRunClient, LLMClient, OpenAIChatClient
+from .manifest import RunTimer, compact_summary, new_run_id, write_manifest
+from .models import BatchResult, DocumentRecord, ExtractionResult, FileResult, QAResult, SecurityFinding
+from .parsing import ParseError, parse_document
+from .prompts import (
+    build_batch_reduce_prompt,
+    build_extraction_prompt,
+    build_mapping_prompt,
+    build_research_map_prompt,
+    build_research_reduce_prompt,
+)
+from .scanning import scan_documents, supported_records
+from .security import PromptInjectionDetector, SensitiveDataRedactor, format_findings, has_high_risk_findings
+from .writers import ensure_output_dir, safe_stem, write_content, write_csv, write_json, write_text
+
+
+def process_file(
+    file_path: str,
+    instruction: str,
+    output_dir: str = "data/outputs",
+    output_format: str = "docx",
+    llm_client: LLMClient | None = None,
+    dry_run: bool = False,
+    strict_security: bool = False,
+    redact: bool = False,
+    max_chars: int = 12000,
+) -> FileResult:
+    """Process one file and write one output artifact."""
+
+    path = Path(file_path).expanduser().resolve()
+    record = DocumentRecord(
+        path=str(path),
+        relative_path=path.name,
+        extension=path.suffix.lower(),
+        size_bytes=path.stat().st_size if path.exists() else 0,
+        supported=True,
+    )
+    client = _resolve_client(llm_client, dry_run)
+    output_root = ensure_output_dir(output_dir)
+    return _process_record_mapping(
+        record=record,
+        instruction=instruction,
+        output_dir=output_root,
+        output_format=output_format,
+        client=client,
+        strict_security=strict_security,
+        redact=redact,
+        max_chars=max_chars,
+    )
+
+
+def process_directory(
+    input_dir: str,
+    instruction: str,
+    mode: str = "mapping",
+    output_dir: str = "data/outputs",
+    output_format: str = "docx",
+    dry_run: bool = False,
+    strict_security: bool = False,
+    redact: bool = False,
+    llm_client: LLMClient | None = None,
+    max_chars: int = 12000,
+) -> BatchResult:
+    """Process a directory in mapping or aggregation mode."""
+
+    normalized_mode = mode.lower()
+    if normalized_mode not in {"mapping", "aggregation"}:
+        raise ValueError("mode must be 'mapping' or 'aggregation'")
+    if normalized_mode == "aggregation":
+        fields = _fields_from_instruction(instruction)
+        extraction = extract_fields(
+            input_dir=input_dir,
+            fields=fields,
+            output_dir=output_dir,
+            output_format="csv",
+            dry_run=dry_run,
+            strict_security=strict_security,
+            redact=redact,
+            llm_client=llm_client,
+            max_chars=max_chars,
+        )
+        files = extraction.files
+        succeeded = sum(1 for result in files if result.success)
+        skipped = sum(1 for result in files if result.metadata.get("skipped"))
+        failed = len(files) - succeeded - skipped
+        return BatchResult(
+            run_id=extraction.run_id,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            total=len(files),
+            succeeded=succeeded,
+            failed=failed,
+            skipped=skipped,
+            files=files,
+            manifest_path=extraction.manifest_path,
+        )
+
+    run_id = new_run_id("batch")
+    timer = RunTimer()
+    output_root = ensure_output_dir(output_dir)
+    records = scan_documents(input_dir)
+    client = _resolve_client(llm_client, dry_run)
+    results: List[FileResult] = []
+    for record in records:
+        if record.skipped or not record.supported:
+            results.append(_skipped_result(record))
+            continue
+        result = _process_record_mapping(
+            record=record,
+            instruction=instruction,
+            output_dir=output_root,
+            output_format=output_format,
+            client=client,
+            strict_security=strict_security,
+            redact=redact,
+            max_chars=max_chars,
+        )
+        results.append(result)
+
+    finished_at, elapsed = timer.finish()
+    summary = compact_summary([result.to_dict() for result in results])
+    summary["elapsed_seconds"] = elapsed
+    manifest_path = write_manifest(
+        output_dir=output_root,
+        run_id=run_id,
+        command="batch",
+        input_dir=input_dir,
+        model=client.model_name,
+        parameters={
+            "instruction": instruction,
+            "mode": normalized_mode,
+            "output_format": output_format,
+            "dry_run": dry_run,
+            "strict_security": strict_security,
+            "redact": redact,
+            "max_chars": max_chars,
+        },
+        documents=records,
+        results=[result.to_dict() for result in results],
+        summary=summary,
+        started_at=timer.started_at,
+        finished_at=finished_at,
+    )
+    return BatchResult(
+        run_id=run_id,
+        input_dir=input_dir,
+        output_dir=str(output_root),
+        total=len(results),
+        succeeded=summary["succeeded"],
+        failed=summary["failed"],
+        skipped=summary["skipped"],
+        files=results,
+        manifest_path=manifest_path,
+    )
+
+
+def answer_over_directory(
+    input_dir: str,
+    question: str,
+    output_dir: str = "data/outputs",
+    dry_run: bool = False,
+    strict_security: bool = False,
+    redact: bool = False,
+    llm_client: LLMClient | None = None,
+    max_chars: int = 12000,
+) -> QAResult:
+    """Answer a question over all supported documents in a directory."""
+
+    run_id = new_run_id("research")
+    timer = RunTimer()
+    output_root = ensure_output_dir(output_dir)
+    records = scan_documents(input_dir)
+    client = _resolve_client(llm_client, dry_run)
+    detector = PromptInjectionDetector()
+    redactor = SensitiveDataRedactor()
+    evidence_notes: List[str] = []
+    sources: List[str] = []
+    skipped_files: List[str] = []
+    all_findings: List[SecurityFinding] = []
+    file_results: List[FileResult] = []
+
+    for record in records:
+        if record.skipped or not record.supported:
+            skipped_files.append(record.relative_path)
+            file_results.append(_skipped_result(record))
+            continue
+        try:
+            text = parse_document(record.path)
+            findings = detector.inspect(text)
+            if redact:
+                text, redaction_findings = redactor.redact(text)
+                findings.extend(redaction_findings)
+            record.findings = findings
+            all_findings.extend(findings)
+            if strict_security and has_high_risk_findings(findings):
+                skipped_files.append(record.relative_path)
+                file_results.append(
+                    FileResult(
+                        input_path=record.path,
+                        output_path=None,
+                        success=False,
+                        message=f"skipped by strict security policy: {format_findings(findings)}",
+                        findings=findings,
+                        metadata={"skipped": True, "security_skipped": True},
+                    )
+                )
+                continue
+            chunks = split_text(text, record.path, max_chars=max_chars)
+            if not chunks:
+                skipped_files.append(record.relative_path)
+                file_results.append(
+                    FileResult(record.path, None, False, "empty parsed document", findings, {"skipped": True})
+                )
+                continue
+            sources.append(record.relative_path)
+            if dry_run:
+                evidence_notes.append(_dry_run_evidence(record, chunks, findings))
+            else:
+                for chunk in chunks:
+                    prompt = build_research_map_prompt(question, chunk, findings)
+                    note = client.generate(prompt)
+                    if note and "NO_RELEVANT_EVIDENCE" not in note:
+                        evidence_notes.append(f"### {chunk.label}\n{note}")
+            file_results.append(
+                FileResult(
+                    input_path=record.path,
+                    output_path=None,
+                    success=True,
+                    message=f"processed {len(chunks)} chunk(s)",
+                    findings=findings,
+                    metadata={"chunks": len(chunks), "tokens_estimate": estimate_tokens(text)},
+                )
+            )
+        except Exception as exc:
+            file_results.append(FileResult(record.path, None, False, str(exc)))
+
+    if dry_run:
+        answer = _dry_run_research_report(question, sources, evidence_notes, skipped_files)
+    elif evidence_notes:
+        answer = client.generate(build_research_reduce_prompt(question, evidence_notes))
+    else:
+        answer = "未在支持的文档中找到足够证据回答该问题。"
+
+    report_path = write_text(answer, output_root / f"{run_id}_research.md")
+    finished_at, elapsed = timer.finish()
+    result_dicts = [result.to_dict() for result in file_results]
+    summary = compact_summary(result_dicts)
+    summary["elapsed_seconds"] = elapsed
+    summary["sources"] = len(sources)
+    manifest_path = write_manifest(
+        output_dir=output_root,
+        run_id=run_id,
+        command="research",
+        input_dir=input_dir,
+        model=client.model_name,
+        parameters={
+            "question": question,
+            "dry_run": dry_run,
+            "strict_security": strict_security,
+            "redact": redact,
+            "max_chars": max_chars,
+        },
+        documents=records,
+        results=result_dicts,
+        summary=summary,
+        started_at=timer.started_at,
+        finished_at=finished_at,
+    )
+    return QAResult(
+        run_id=run_id,
+        question=question,
+        answer=answer,
+        report_path=report_path,
+        manifest_path=manifest_path,
+        sources=sources,
+        findings=all_findings,
+        skipped_files=skipped_files,
+    )
+
+
+def extract_fields(
+    input_dir: str,
+    fields: Sequence[str],
+    output_dir: str = "data/outputs",
+    output_format: str = "csv",
+    dry_run: bool = False,
+    strict_security: bool = False,
+    redact: bool = False,
+    llm_client: LLMClient | None = None,
+    max_chars: int = 12000,
+) -> ExtractionResult:
+    """Extract structured fields from each supported document."""
+
+    if not fields:
+        raise ValueError("fields must not be empty")
+    run_id = new_run_id("extract")
+    timer = RunTimer()
+    output_root = ensure_output_dir(output_dir)
+    records = scan_documents(input_dir)
+    client = _resolve_client(llm_client, dry_run)
+    detector = PromptInjectionDetector()
+    redactor = SensitiveDataRedactor()
+    rows: List[Dict[str, Any]] = []
+    file_results: List[FileResult] = []
+
+    for record in records:
+        if record.skipped or not record.supported:
+            file_results.append(_skipped_result(record))
+            continue
+        try:
+            text = parse_document(record.path)
+            findings = detector.inspect(text)
+            if redact:
+                text, redaction_findings = redactor.redact(text)
+                findings.extend(redaction_findings)
+            record.findings = findings
+            if strict_security and has_high_risk_findings(findings):
+                file_results.append(
+                    FileResult(
+                        record.path,
+                        None,
+                        False,
+                        f"skipped by strict security policy: {format_findings(findings)}",
+                        findings,
+                        {"skipped": True, "security_skipped": True},
+                    )
+                )
+                continue
+            chunks = split_text(text, record.path, max_chars=max_chars)
+            row = {"source_file": record.relative_path}
+            row.update({field: "" for field in fields})
+            if dry_run:
+                row["dry_run"] = "true"
+            else:
+                chunk_rows = []
+                for chunk in chunks:
+                    response = client.generate(build_extraction_prompt(fields, chunk, findings))
+                    chunk_rows.append(_extract_json_object(response))
+                row.update(_merge_extraction_rows(fields, chunk_rows))
+            rows.append(row)
+            file_results.append(
+                FileResult(
+                    input_path=record.path,
+                    output_path=None,
+                    success=True,
+                    message=f"extracted {len(fields)} field(s)",
+                    findings=findings,
+                    metadata={"chunks": len(chunks)},
+                )
+            )
+        except Exception as exc:
+            file_results.append(FileResult(record.path, None, False, str(exc)))
+
+    output_format_normalized = output_format.lower().lstrip(".")
+    if output_format_normalized == "json":
+        output_path = write_json(rows, output_root / f"{run_id}_extraction.json")
+    elif output_format_normalized == "csv":
+        output_path = write_csv(rows, output_root / f"{run_id}_extraction.csv", fields=["source_file", *fields])
+    else:
+        raise ValueError("output_format must be csv or json")
+
+    finished_at, elapsed = timer.finish()
+    result_dicts = [result.to_dict() for result in file_results]
+    summary = compact_summary(result_dicts)
+    summary["elapsed_seconds"] = elapsed
+    summary["rows"] = len(rows)
+    manifest_path = write_manifest(
+        output_dir=output_root,
+        run_id=run_id,
+        command="extract",
+        input_dir=input_dir,
+        model=client.model_name,
+        parameters={
+            "fields": list(fields),
+            "output_format": output_format,
+            "dry_run": dry_run,
+            "strict_security": strict_security,
+            "redact": redact,
+            "max_chars": max_chars,
+        },
+        documents=records,
+        results=result_dicts,
+        summary=summary,
+        started_at=timer.started_at,
+        finished_at=finished_at,
+    )
+    return ExtractionResult(
+        run_id=run_id,
+        fields=list(fields),
+        rows=rows,
+        output_path=output_path,
+        manifest_path=manifest_path,
+        files=file_results,
+    )
+
+
+def _process_record_mapping(
+    record: DocumentRecord,
+    instruction: str,
+    output_dir: Path,
+    output_format: str,
+    client: LLMClient,
+    strict_security: bool,
+    redact: bool,
+    max_chars: int,
+) -> FileResult:
+    detector = PromptInjectionDetector()
+    redactor = SensitiveDataRedactor()
+    try:
+        text = parse_document(record.path)
+        findings = detector.inspect(text)
+        if redact:
+            text, redaction_findings = redactor.redact(text)
+            findings.extend(redaction_findings)
+        record.findings = findings
+        if strict_security and has_high_risk_findings(findings):
+            return FileResult(
+                input_path=record.path,
+                output_path=None,
+                success=False,
+                message=f"skipped by strict security policy: {format_findings(findings)}",
+                findings=findings,
+                metadata={"skipped": True, "security_skipped": True},
+            )
+        chunks = split_text(text, record.path, max_chars=max_chars)
+        if not chunks:
+            return FileResult(record.path, None, False, "empty parsed document", findings, {"skipped": True})
+        chunk_outputs = [client.generate(build_mapping_prompt(instruction, chunk, findings)) for chunk in chunks]
+        if len(chunk_outputs) == 1:
+            final_output = chunk_outputs[0]
+        else:
+            final_output = client.generate(build_batch_reduce_prompt(instruction, record.relative_path, chunk_outputs))
+        extension = _text_output_extension(output_format)
+        output_path = output_dir / f"{safe_stem(record.relative_path)}_processed.{extension}"
+        saved_path = write_content(final_output, output_path, output_format=output_format)
+        return FileResult(
+            input_path=record.path,
+            output_path=saved_path,
+            success=True,
+            message=f"processed {len(chunks)} chunk(s)",
+            findings=findings,
+            metadata={"chunks": len(chunks), "tokens_estimate": estimate_tokens(text)},
+        )
+    except (ParseError, OSError, RuntimeError, ValueError) as exc:
+        return FileResult(record.path, None, False, str(exc))
+
+
+def _resolve_client(llm_client: LLMClient | None, dry_run: bool) -> LLMClient:
+    if llm_client is not None:
+        return llm_client
+    if dry_run:
+        return DryRunClient()
+    return OpenAIChatClient()
+
+
+def _skipped_result(record: DocumentRecord) -> FileResult:
+    reason = record.skip_reason or "unsupported file"
+    return FileResult(
+        input_path=record.path,
+        output_path=None,
+        success=False,
+        message=reason,
+        findings=record.findings,
+        metadata={"skipped": True},
+    )
+
+
+def _dry_run_evidence(record: DocumentRecord, chunks: Sequence[Any], findings: Sequence[SecurityFinding]) -> str:
+    risk = format_findings(findings) if findings else "none"
+    return f"### {record.relative_path}\nDRY RUN: would process {len(chunks)} chunk(s). Security findings: {risk}."
+
+
+def _dry_run_research_report(question: str, sources: Sequence[str], evidence: Sequence[str], skipped: Sequence[str]) -> str:
+    source_lines = "\n".join(f"- {source}" for source in sources) or "- 无"
+    skipped_lines = "\n".join(f"- {source}" for source in skipped) or "- 无"
+    evidence_preview = "\n\n".join(evidence) or "无"
+    return f"""# LAMB Dry-Run Research Report
+
+## Question
+{question}
+
+## Sources That Would Be Processed
+{source_lines}
+
+## Skipped Files
+{skipped_lines}
+
+## Planned Evidence Notes
+{evidence_preview}
+"""
+
+
+def _text_output_extension(output_format: str) -> str:
+    normalized = output_format.lower().lstrip(".")
+    if normalized == "markdown":
+        return "md"
+    if normalized in {"md", "txt", "docx"}:
+        return normalized
+    raise ValueError("output_format must be one of: md, markdown, txt, docx")
+
+
+def _extract_json_object(text: str) -> Dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    if cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+    try:
+        value = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError(f"LLM output did not contain a JSON object: {text[:120]}")
+        value = json.loads(cleaned[start : end + 1])
+    if not isinstance(value, dict):
+        raise ValueError("LLM extraction output must be a JSON object")
+    return value
+
+
+def _merge_extraction_rows(fields: Sequence[str], rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    merged = {field: "" for field in fields}
+    for row in rows:
+        for field in fields:
+            value = row.get(field)
+            if value not in (None, "", []):
+                if not merged[field]:
+                    merged[field] = value
+                elif merged[field] != value:
+                    merged[field] = f"{merged[field]}; {value}"
+    return merged
+
+
+def _fields_from_instruction(instruction: str) -> List[str]:
+    separators = [",", "，", ";", "；", "\n"]
+    text = instruction
+    for separator in separators[1:]:
+        text = text.replace(separator, separators[0])
+    fields = [part.strip() for part in text.split(",") if part.strip()]
+    if len(fields) >= 2 and all(len(field) <= 24 for field in fields):
+        return fields
+    return ["摘要", "关键结论", "备注"]
