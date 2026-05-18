@@ -11,6 +11,8 @@ Chinese version: [README.md](README.md)
 
 > Give LAMB a folder. It scans, parses, safety-checks, chunks, calls an LLM, exports results, and writes an audit manifest.
 
+![LAMB system overview](docs/assets/lamb-system-overview.png)
+
 ---
 
 ## Why LAMB
@@ -172,18 +174,6 @@ Depending on the workflow, LAMB writes:
 - CSV or JSON extraction tables
 - Per-document Markdown, TXT, or DOCX outputs
 - `*_manifest.json` audit files
-
----
-
-## Project Figure Prompt
-
-Use the following prompt to generate a **research-paper-style system overview figure** for the README, a competition poster, or a presentation slide. The figure should feel like a method/framework diagram from a paper, with a slightly modern and approachable visual style.
-
-Recommended aspect ratio: `16:9` or `4:3`.
-
-```text
-Create a research-paper-style system overview figure for an open-source project named LAMB. The visual style should resemble a method overview figure from an ACL/CHI/ICSE/USENIX paper: clean, modular, structured, readable, and academic, but with a slightly modern and approachable product feel. Show the full LAMB pipeline from left to right. On the left, show a local document folder containing PDFs, Word files, Markdown, TXT, CSV, JSON, papers, homework, resumes, and meeting notes. In the center, show a large grouped module labeled "LAMB Core" with six submodules: Document Scanner, Parser, Safety Guard, Chunker, LLM Workflow, Exporter. The Safety Guard submodule should include visual cues for Prompt Injection Detection, Sensitive Redaction, and Path Boundary, using a shield and small warning markers. The Chunker submodule should show long documents split into smaller chunks. The LLM Workflow submodule should branch into Batch Processing, Multi-document QA, and Field Extraction. On the right, show outputs: Markdown Research Report, CSV/JSON Table, Per-file Summary, and manifest.json Audit Trail. Use boxes, arrows, grouped panels, simple icons, and clear flow direction. White or light-gray background, blue and teal as primary colors, orange accents for security warnings. Style requirements: academic paper figure, system architecture diagram, clean vector illustration, high readability, balanced spacing, minimal decoration, subtle shadows, no photorealistic people, no cartoon animals, no cyberpunk style, no clutter, no random unreadable text, no real company logos. Leave a clean title area at the top: "LAMB: Safe Multi-document AI Batch Assistant".
-```
 
 ---
 
