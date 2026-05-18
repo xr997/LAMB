@@ -20,7 +20,7 @@ from .prompts import (
 )
 from .scanning import scan_documents, supported_records
 from .security import PromptInjectionDetector, SensitiveDataRedactor, format_findings, has_high_risk_findings
-from .writers import ensure_output_dir, safe_stem, write_content, write_csv, write_json, write_text
+from .writers import ensure_output_dir, safe_stem, write_content, write_csv, write_json, write_output_index, write_text
 
 
 def process_file(
@@ -150,6 +150,14 @@ def process_directory(
         started_at=timer.started_at,
         finished_at=finished_at,
     )
+    write_output_index(
+        output_dir=output_root,
+        run_id=run_id,
+        command="batch",
+        summary=summary,
+        manifest_path=manifest_path,
+        output_paths=[result.output_path for result in results],
+    )
     return BatchResult(
         run_id=run_id,
         input_dir=input_dir,
@@ -275,6 +283,14 @@ def answer_over_directory(
         started_at=timer.started_at,
         finished_at=finished_at,
     )
+    write_output_index(
+        output_dir=output_root,
+        run_id=run_id,
+        command="research",
+        summary=summary,
+        manifest_path=manifest_path,
+        output_paths=[report_path],
+    )
     return QAResult(
         run_id=run_id,
         question=question,
@@ -392,6 +408,14 @@ def extract_fields(
         summary=summary,
         started_at=timer.started_at,
         finished_at=finished_at,
+    )
+    write_output_index(
+        output_dir=output_root,
+        run_id=run_id,
+        command="extract",
+        summary=summary,
+        manifest_path=manifest_path,
+        output_paths=[output_path],
     )
     return ExtractionResult(
         run_id=run_id,

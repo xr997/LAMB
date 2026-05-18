@@ -72,6 +72,37 @@ def write_content(content: str, path: str | Path, output_format: str = "md") -> 
     raise ValueError(f"unsupported text output format: {output_format}")
 
 
+def write_output_index(
+    output_dir: str | Path,
+    run_id: str,
+    command: str,
+    summary: Mapping[str, Any],
+    manifest_path: str | None,
+    output_paths: Sequence[str | None],
+) -> str:
+    target = Path(output_dir).expanduser().resolve() / "latest_index.md"
+    lines = [
+        "# LAMB Output Index",
+        "",
+        f"- Run ID: `{run_id}`",
+        f"- Command: `{command}`",
+        f"- Succeeded: `{summary.get('succeeded', 0)}`",
+        f"- Failed: `{summary.get('failed', 0)}`",
+        f"- Skipped: `{summary.get('skipped', 0)}`",
+        "",
+        "## Outputs",
+        "",
+    ]
+    valid_outputs = [path for path in output_paths if path]
+    if valid_outputs:
+        lines.extend(f"- `{path}`" for path in valid_outputs)
+    else:
+        lines.append("- No output files were generated.")
+    lines.extend(["", "## Manifest", ""])
+    lines.append(f"- `{manifest_path}`" if manifest_path else "- No manifest was generated.")
+    return write_text("\n".join(lines) + "\n", target)
+
+
 def _union_headers(rows: Iterable[Mapping[str, Any]]) -> list[str]:
     headers: list[str] = []
     for row in rows:

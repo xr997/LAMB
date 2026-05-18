@@ -58,3 +58,5 @@ All commands write artifacts under `data/outputs` by default:
 - A `*_manifest.json` audit file for each run.
 
 The manifest records input files, model name, parameters, security findings, failures, and elapsed time.
+
+LAMB also writes `latest_index.md` in the output directory. It lists the latest run id, generated output files, manifest path, and success/failure counts.
