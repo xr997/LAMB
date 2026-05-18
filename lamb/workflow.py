@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
 from .chunking import estimate_tokens, split_text
 from .llm import DryRunClient, LLMClient, OpenAIChatClient
 from .manifest import RunTimer, compact_summary, new_run_id, write_manifest
-from .models import BatchResult, DocumentRecord, ExtractionResult, FileResult, QAResult, SecurityFinding
-from .parsing import ParseError, parse_document
+from .models import BatchResult, DocumentRecord, ExtractionResult, FileResult, QAResult, SecurityFinding, TextChunk
+from .parsing import ParseError, is_supported_extension, parse_document
 from .prompts import (
     build_batch_reduce_prompt,
     build_extraction_prompt,
@@ -21,6 +22,14 @@ from .prompts import (
 from .scanning import scan_documents, supported_records
 from .security import PromptInjectionDetector, SensitiveDataRedactor, format_findings, has_high_risk_findings
 from .writers import ensure_output_dir, safe_stem, write_content, write_csv, write_json, write_output_index, write_text
+
+
+@dataclass
+class PreparedDocument:
+    text: str
+    findings: List[SecurityFinding]
+    chunks: List[TextChunk]
+    tokens_estimate: int
 
 
 def process_file(
@@ -43,8 +52,16 @@ def process_file(
         relative_path=path.name,
         extension=path.suffix.lower(),
         size_bytes=path.stat().st_size if path.exists() else 0,
-        supported=True,
+        supported=is_supported_extension(path.suffix.lower()),
     )
+    if not record.supported:
+        return FileResult(
+            input_path=str(path),
+            output_path=None,
+            success=False,
+            message=f"unsupported extension: {record.extension or '<none>'}",
+            metadata={"skipped": True},
+        )
     client = _resolve_client(llm_client, dry_run, model_name)
     output_root = ensure_output_dir(output_dir)
     return _process_record_mapping(
@@ -79,11 +96,14 @@ def process_directory(
         raise ValueError("mode must be 'mapping' or 'aggregation'")
     if normalized_mode == "aggregation":
         fields = _fields_from_instruction(instruction)
+        aggregation_format = output_format.lower().lstrip(".")
+        if aggregation_format not in {"csv", "json"}:
+            aggregation_format = "csv"
         extraction = extract_fields(
             input_dir=input_dir,
             fields=fields,
             output_dir=output_dir,
-            output_format="csv",
+            output_format=aggregation_format,
             dry_run=dry_run,
             strict_security=strict_security,
             redact=redact,
@@ -206,38 +226,25 @@ def answer_over_directory(
             file_results.append(_skipped_result(record))
             continue
         try:
-            text = parse_document(record.path)
-            findings = detector.inspect(text)
-            if redact:
-                text, redaction_findings = redactor.redact(text)
-                findings.extend(redaction_findings)
-            record.findings = findings
-            all_findings.extend(findings)
-            if strict_security and has_high_risk_findings(findings):
-                skipped_files.append(record.relative_path)
-                file_results.append(
-                    FileResult(
-                        input_path=record.path,
-                        output_path=None,
-                        success=False,
-                        message=f"skipped by strict security policy: {format_findings(findings)}",
-                        findings=findings,
-                        metadata={"skipped": True, "security_skipped": True},
-                    )
-                )
-                continue
-            chunks = split_text(text, record.path, max_chars=max_chars)
-            if not chunks:
-                skipped_files.append(record.relative_path)
-                file_results.append(
-                    FileResult(record.path, None, False, "empty parsed document", findings, {"skipped": True})
-                )
+            prepared, failure = _prepare_record(
+                record=record,
+                detector=detector,
+                redactor=redactor,
+                strict_security=strict_security,
+                redact=redact,
+                max_chars=max_chars,
+            )
+            all_findings.extend(record.findings)
+            if failure:
+                if failure.metadata.get("skipped"):
+                    skipped_files.append(record.relative_path)
+                file_results.append(failure)
                 continue
             if dry_run:
-                evidence_notes.append(_dry_run_evidence(record, chunks, findings))
+                evidence_notes.append(_dry_run_evidence(record, prepared.chunks, prepared.findings))
             else:
-                for chunk in chunks:
-                    prompt = build_research_map_prompt(question, chunk, findings)
+                for chunk in prepared.chunks:
+                    prompt = build_research_map_prompt(question, chunk, prepared.findings)
                     note = client.generate(prompt)
                     if note and "NO_RELEVANT_EVIDENCE" not in note:
                         evidence_notes.append(f"### {chunk.label}\n{note}")
@@ -247,9 +254,9 @@ def answer_over_directory(
                     input_path=record.path,
                     output_path=None,
                     success=True,
-                    message=f"processed {len(chunks)} chunk(s)",
-                    findings=findings,
-                    metadata={"chunks": len(chunks), "tokens_estimate": estimate_tokens(text)},
+                    message=f"processed {len(prepared.chunks)} chunk(s)",
+                    findings=prepared.findings,
+                    metadata={"chunks": len(prepared.chunks), "tokens_estimate": prepared.tokens_estimate},
                 )
             )
         except Exception as exc:
@@ -258,7 +265,19 @@ def answer_over_directory(
     if dry_run:
         answer = _dry_run_research_report(question, sources, evidence_notes, skipped_files)
     elif evidence_notes:
-        answer = client.generate(build_research_reduce_prompt(question, evidence_notes))
+        try:
+            answer = client.generate(build_research_reduce_prompt(question, evidence_notes))
+        except Exception as exc:
+            answer = f"LLM reduce stage failed: {exc}"
+            file_results.append(
+                FileResult(
+                    input_path="<research-reduce>",
+                    output_path=None,
+                    success=False,
+                    message=str(exc),
+                    metadata={"stage": "reduce"},
+                )
+            )
     else:
         answer = "未在支持的文档中找到足够证据回答该问题。"
 
@@ -304,6 +323,7 @@ def answer_over_directory(
         sources=sources,
         findings=all_findings,
         skipped_files=skipped_files,
+        failed=summary["failed"],
     )
 
 
@@ -321,8 +341,8 @@ def extract_fields(
 ) -> ExtractionResult:
     """Extract structured fields from each supported document."""
 
-    if not fields:
-        raise ValueError("fields must not be empty")
+    normalized_fields = _normalize_fields(fields)
+    output_format_normalized = _normalize_extraction_format(output_format)
     run_id = new_run_id("extract")
     timer = RunTimer()
     output_root = ensure_output_dir(output_dir)
@@ -338,56 +358,45 @@ def extract_fields(
             file_results.append(_skipped_result(record))
             continue
         try:
-            text = parse_document(record.path)
-            findings = detector.inspect(text)
-            if redact:
-                text, redaction_findings = redactor.redact(text)
-                findings.extend(redaction_findings)
-            record.findings = findings
-            if strict_security and has_high_risk_findings(findings):
-                file_results.append(
-                    FileResult(
-                        record.path,
-                        None,
-                        False,
-                        f"skipped by strict security policy: {format_findings(findings)}",
-                        findings,
-                        {"skipped": True, "security_skipped": True},
-                    )
-                )
+            prepared, failure = _prepare_record(
+                record=record,
+                detector=detector,
+                redactor=redactor,
+                strict_security=strict_security,
+                redact=redact,
+                max_chars=max_chars,
+            )
+            if failure:
+                file_results.append(failure)
                 continue
-            chunks = split_text(text, record.path, max_chars=max_chars)
             row = {"source_file": record.relative_path}
-            row.update({field: "" for field in fields})
+            row.update({field: "" for field in normalized_fields})
             if dry_run:
                 row["dry_run"] = "true"
             else:
                 chunk_rows = []
-                for chunk in chunks:
-                    response = client.generate(build_extraction_prompt(fields, chunk, findings))
+                for chunk in prepared.chunks:
+                    response = client.generate(build_extraction_prompt(normalized_fields, chunk, prepared.findings))
                     chunk_rows.append(_extract_json_object(response))
-                row.update(_merge_extraction_rows(fields, chunk_rows))
+                row.update(_merge_extraction_rows(normalized_fields, chunk_rows))
             rows.append(row)
             file_results.append(
                 FileResult(
                     input_path=record.path,
                     output_path=None,
                     success=True,
-                    message=f"extracted {len(fields)} field(s)",
-                    findings=findings,
-                    metadata={"chunks": len(chunks)},
+                    message=f"extracted {len(normalized_fields)} field(s)",
+                    findings=prepared.findings,
+                    metadata={"chunks": len(prepared.chunks)},
                 )
             )
         except Exception as exc:
             file_results.append(FileResult(record.path, None, False, str(exc)))
 
-    output_format_normalized = output_format.lower().lstrip(".")
     if output_format_normalized == "json":
         output_path = write_json(rows, output_root / f"{run_id}_extraction.json")
-    elif output_format_normalized == "csv":
-        output_path = write_csv(rows, output_root / f"{run_id}_extraction.csv", fields=["source_file", *fields])
     else:
-        raise ValueError("output_format must be csv or json")
+        output_path = write_csv(rows, output_root / f"{run_id}_extraction.csv", fields=["source_file", *normalized_fields])
 
     finished_at, elapsed = timer.finish()
     result_dicts = [result.to_dict() for result in file_results]
@@ -401,7 +410,7 @@ def extract_fields(
         input_dir=input_dir,
         model=client.model_name,
         parameters={
-            "fields": list(fields),
+            "fields": normalized_fields,
             "output_format": output_format,
             "dry_run": dry_run,
             "strict_security": strict_security,
@@ -424,7 +433,7 @@ def extract_fields(
     )
     return ExtractionResult(
         run_id=run_id,
-        fields=list(fields),
+        fields=normalized_fields,
         rows=rows,
         output_path=output_path,
         manifest_path=manifest_path,
@@ -445,25 +454,19 @@ def _process_record_mapping(
     detector = PromptInjectionDetector()
     redactor = SensitiveDataRedactor()
     try:
-        text = parse_document(record.path)
-        findings = detector.inspect(text)
-        if redact:
-            text, redaction_findings = redactor.redact(text)
-            findings.extend(redaction_findings)
-        record.findings = findings
-        if strict_security and has_high_risk_findings(findings):
-            return FileResult(
-                input_path=record.path,
-                output_path=None,
-                success=False,
-                message=f"skipped by strict security policy: {format_findings(findings)}",
-                findings=findings,
-                metadata={"skipped": True, "security_skipped": True},
-            )
-        chunks = split_text(text, record.path, max_chars=max_chars)
-        if not chunks:
-            return FileResult(record.path, None, False, "empty parsed document", findings, {"skipped": True})
-        chunk_outputs = [client.generate(build_mapping_prompt(instruction, chunk, findings)) for chunk in chunks]
+        prepared, failure = _prepare_record(
+            record=record,
+            detector=detector,
+            redactor=redactor,
+            strict_security=strict_security,
+            redact=redact,
+            max_chars=max_chars,
+        )
+        if failure:
+            return failure
+        chunk_outputs = [
+            client.generate(build_mapping_prompt(instruction, chunk, prepared.findings)) for chunk in prepared.chunks
+        ]
         if len(chunk_outputs) == 1:
             final_output = chunk_outputs[0]
         else:
@@ -475,12 +478,62 @@ def _process_record_mapping(
             input_path=record.path,
             output_path=saved_path,
             success=True,
-            message=f"processed {len(chunks)} chunk(s)",
-            findings=findings,
-            metadata={"chunks": len(chunks), "tokens_estimate": estimate_tokens(text)},
+            message=f"processed {len(prepared.chunks)} chunk(s)",
+            findings=prepared.findings,
+            metadata={"chunks": len(prepared.chunks), "tokens_estimate": prepared.tokens_estimate},
         )
     except (ParseError, OSError, RuntimeError, ValueError) as exc:
         return FileResult(record.path, None, False, str(exc))
+
+
+def _prepare_record(
+    record: DocumentRecord,
+    detector: PromptInjectionDetector,
+    redactor: SensitiveDataRedactor,
+    strict_security: bool,
+    redact: bool,
+    max_chars: int,
+) -> tuple[PreparedDocument | None, FileResult | None]:
+    try:
+        text = parse_document(record.path)
+        findings = detector.inspect(text)
+        if redact:
+            text, redaction_findings = redactor.redact(text)
+            findings.extend(redaction_findings)
+        record.findings = findings
+        if strict_security and has_high_risk_findings(findings):
+            return None, FileResult(
+                input_path=record.path,
+                output_path=None,
+                success=False,
+                message=f"skipped by strict security policy: {format_findings(findings)}",
+                findings=findings,
+                metadata={"skipped": True, "security_skipped": True},
+            )
+        chunks = split_text(text, record.path, max_chars=max_chars)
+        if not chunks:
+            return None, FileResult(
+                input_path=record.path,
+                output_path=None,
+                success=False,
+                message="empty parsed document",
+                findings=findings,
+                metadata={"skipped": True, "empty": True},
+            )
+        return PreparedDocument(
+            text=text,
+            findings=findings,
+            chunks=chunks,
+            tokens_estimate=estimate_tokens(text),
+        ), None
+    except (ParseError, OSError, ValueError) as exc:
+        return None, FileResult(
+            input_path=record.path,
+            output_path=None,
+            success=False,
+            message=str(exc),
+            findings=record.findings,
+        )
 
 
 def _resolve_client(llm_client: LLMClient | None, dry_run: bool, model_name: str | None = None) -> LLMClient:
@@ -570,6 +623,27 @@ def _merge_extraction_rows(fields: Sequence[str], rows: Iterable[Dict[str, Any]]
                 elif merged[field] != value:
                     merged[field] = f"{merged[field]}; {value}"
     return merged
+
+
+def _normalize_fields(fields: Sequence[str]) -> List[str]:
+    normalized = []
+    seen = set()
+    for field in fields:
+        field_name = str(field).strip()
+        if not field_name or field_name in seen:
+            continue
+        normalized.append(field_name)
+        seen.add(field_name)
+    if not normalized:
+        raise ValueError("fields must contain at least one non-empty field")
+    return normalized
+
+
+def _normalize_extraction_format(output_format: str) -> str:
+    normalized = output_format.lower().lstrip(".")
+    if normalized not in {"csv", "json"}:
+        raise ValueError("output_format must be csv or json")
+    return normalized
 
 
 def _fields_from_instruction(instruction: str) -> List[str]:

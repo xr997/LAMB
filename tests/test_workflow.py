@@ -21,6 +21,14 @@ class FakeLLM:
         return "chunk result with source"
 
 
+class FailingReduceLLM(FakeLLM):
+    def generate(self, prompt, system_prompt=None):
+        self.prompts.append(prompt)
+        if "Write a Markdown research report" in prompt:
+            raise RuntimeError("reduce unavailable")
+        return "evidence note"
+
+
 class WorkflowTests(unittest.TestCase):
     def test_batch_dry_run_writes_manifest_and_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,6 +112,80 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(result.failed, 0)
             self.assertIn("strict security", result.files[0].message)
             self.assertTrue(result.files[0].findings)
+
+    def test_duplicate_file_stems_do_not_overwrite_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root / "inputs"
+            outputs = root / "outputs"
+            (inputs / "class_a").mkdir(parents=True)
+            (inputs / "class_b").mkdir(parents=True)
+            (inputs / "class_a" / "note.txt").write_text("A", encoding="utf-8")
+            (inputs / "class_b" / "note.txt").write_text("B", encoding="utf-8")
+
+            result = process_directory(
+                str(inputs),
+                instruction="summarize",
+                output_dir=str(outputs),
+                output_format="md",
+                dry_run=True,
+            )
+
+            output_paths = [file_result.output_path for file_result in result.files if file_result.success]
+            self.assertEqual(len(output_paths), 2)
+            self.assertEqual(len(set(output_paths)), 2)
+            self.assertTrue(all(Path(path).exists() for path in output_paths))
+
+    def test_extract_empty_document_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root / "inputs"
+            outputs = root / "outputs"
+            inputs.mkdir()
+            (inputs / "empty.txt").write_text("", encoding="utf-8")
+
+            result = extract_fields(
+                str(inputs),
+                fields=["姓名", "评语"],
+                output_dir=str(outputs),
+                llm_client=FakeLLM(),
+            )
+
+            self.assertEqual(result.rows, [])
+            self.assertEqual(result.files[0].metadata.get("skipped"), True)
+            self.assertIn("empty", result.files[0].message)
+
+    def test_research_reduce_failure_writes_report_and_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root / "inputs"
+            outputs = root / "outputs"
+            inputs.mkdir()
+            (inputs / "paper.txt").write_text("文档内容", encoding="utf-8")
+
+            result = answer_over_directory(
+                str(inputs),
+                question="这份文档说了什么？",
+                output_dir=str(outputs),
+                llm_client=FailingReduceLLM(),
+            )
+
+            self.assertFalse(result.ok)
+            self.assertEqual(result.failed, 1)
+            self.assertIn("reduce stage failed", result.answer)
+            self.assertTrue(Path(result.report_path).exists())
+            self.assertTrue(Path(result.manifest_path).exists())
+
+    def test_process_file_rejects_unsupported_extension(self):
+        from lamb.workflow import process_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "image.png"
+            path.write_bytes(b"png")
+            result = process_file(str(path), "summarize", output_dir=str(Path(tmp) / "out"))
+
+            self.assertFalse(result.success)
+            self.assertIn("unsupported extension", result.message)
 
 
 if __name__ == "__main__":

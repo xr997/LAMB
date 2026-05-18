@@ -16,8 +16,11 @@ def ensure_output_dir(output_dir: str | Path) -> Path:
 
 
 def safe_stem(name: str, fallback: str = "document") -> str:
-    stem = Path(name).stem or fallback
-    cleaned = re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", stem, flags=re.UNICODE).strip("._")
+    raw_name = str(name).replace("\\", "/")
+    path = Path(raw_name)
+    stem_source = str(path.with_suffix("")) if path.suffix else raw_name
+    stem_source = stem_source.replace("/", "__")
+    cleaned = re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", stem_source, flags=re.UNICODE).strip("._")
     return cleaned or fallback
 
 

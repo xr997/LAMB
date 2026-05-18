@@ -117,10 +117,11 @@ class QAResult:
     sources: List[str]
     findings: List[SecurityFinding] = field(default_factory=list)
     skipped_files: List[str] = field(default_factory=list)
+    failed: int = 0
 
     @property
     def ok(self) -> bool:
-        return bool(self.answer)
+        return bool(self.answer) and self.failed == 0
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)

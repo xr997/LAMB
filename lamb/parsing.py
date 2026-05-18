@@ -35,6 +35,10 @@ def parse_document(path: str | Path) -> str:
     """Extract plain text from a supported document."""
 
     file_path = Path(path)
+    if not file_path.exists():
+        raise ParseError(f"file does not exist: {file_path}")
+    if not file_path.is_file():
+        raise ParseError(f"path is not a file: {file_path}")
     extension = file_path.suffix.lower()
     if extension in {".txt", ".md", ".markdown"}:
         return _read_text(file_path)
@@ -65,7 +69,10 @@ def _read_csv(path: Path, row_limit: int = 5000) -> str:
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
             sample = handle.read(4096)
             handle.seek(0)
-            dialect = csv.Sniffer().sniff(sample) if sample.strip() else csv.excel
+            try:
+                dialect = csv.Sniffer().sniff(sample) if sample.strip() else csv.excel
+            except csv.Error:
+                dialect = csv.excel
             reader = csv.reader(handle, dialect)
             rows = []
             for index, row in enumerate(reader):
@@ -76,7 +83,12 @@ def _read_csv(path: Path, row_limit: int = 5000) -> str:
     except UnicodeDecodeError:
         with path.open("r", encoding="gbk", newline="") as handle:
             reader = csv.reader(handle)
-            rows = [[cell.strip() for cell in row] for row in reader]
+            rows = []
+            for index, row in enumerate(reader):
+                if index >= row_limit:
+                    rows.append([f"... truncated after {row_limit} rows ..."])
+                    break
+                rows.append([cell.strip() for cell in row])
     except Exception as exc:
         raise ParseError(f"failed to read CSV {path}: {exc}") from exc
 
