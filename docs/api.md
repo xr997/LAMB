@@ -16,6 +16,8 @@ for record in records:
     print(record.relative_path, record.supported, record.skip_reason)
 ```
 
+Set `include_hidden=True` when a workflow should process intentional hidden notes or project folders. Sensitive names such as `.env` are still refused.
+
 ## Multi-document Research
 
 ```python
@@ -26,6 +28,7 @@ result = answer_over_directory(
     question="这些文档的共同结论是什么？",
     output_dir="data/outputs",
     redact=True,
+    include_hidden=True,
 )
 
 print(result.answer)
@@ -42,6 +45,7 @@ result = extract_fields(
     input_dir="data/inputs",
     fields=["姓名", "分数", "评语"],
     output_dir="data/outputs",
+    include_hidden=True,
 )
 
 print(result.rows)
@@ -56,6 +60,7 @@ result = process_directory(
     input_dir="data/inputs",
     instruction="请为每份文档生成摘要",
     output_format="md",
+    include_hidden=True,
 )
 
 for file_result in result.files:

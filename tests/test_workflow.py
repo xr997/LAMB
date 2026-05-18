@@ -50,6 +50,39 @@ class WorkflowTests(unittest.TestCase):
             self.assertTrue(Path(result.manifest_path).exists())
             self.assertTrue(Path(result.files[0].output_path).exists())
 
+    def test_batch_can_include_hidden_documents_when_requested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root / "inputs"
+            outputs = root / "outputs"
+            hidden = inputs / ".notes"
+            hidden.mkdir(parents=True)
+            (hidden / "lecture.txt").write_text("隐藏课堂笔记", encoding="utf-8")
+            (inputs / ".env").write_text("LLM_API_KEY=secret", encoding="utf-8")
+
+            default_result = process_directory(
+                str(inputs),
+                instruction="请总结文档",
+                output_dir=str(outputs),
+                output_format="md",
+                dry_run=True,
+            )
+            included_result = process_directory(
+                str(inputs),
+                instruction="请总结文档",
+                output_dir=str(outputs),
+                output_format="md",
+                dry_run=True,
+                include_hidden=True,
+            )
+
+            self.assertEqual(default_result.succeeded, 0)
+            self.assertEqual(default_result.skipped, 2)
+            self.assertEqual(included_result.succeeded, 1)
+            self.assertEqual(included_result.skipped, 1)
+            processed_paths = [result.input_path for result in included_result.files if result.success]
+            self.assertTrue(any(".notes/lecture.txt" in path for path in processed_paths))
+
     def test_research_with_fake_llm(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
