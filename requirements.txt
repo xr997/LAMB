@@ -4,3 +4,4 @@ rich>=13.0.0
 mcp>=1.0.0
 python-docx>=1.1.0
 pymupdf>=1.23.0
+socksio>=1.0.0

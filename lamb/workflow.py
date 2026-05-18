@@ -221,7 +221,6 @@ def answer_over_directory(
                     FileResult(record.path, None, False, "empty parsed document", findings, {"skipped": True})
                 )
                 continue
-            sources.append(record.relative_path)
             if dry_run:
                 evidence_notes.append(_dry_run_evidence(record, chunks, findings))
             else:
@@ -230,6 +229,7 @@ def answer_over_directory(
                     note = client.generate(prompt)
                     if note and "NO_RELEVANT_EVIDENCE" not in note:
                         evidence_notes.append(f"### {chunk.label}\n{note}")
+            sources.append(record.relative_path)
             file_results.append(
                 FileResult(
                     input_path=record.path,

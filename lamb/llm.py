@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 
@@ -25,12 +26,13 @@ class OpenAIChatClient:
     temperature: float = 0.1
     max_tokens: int = 4096
     max_retries: int = 3
+    timeout: float = 60.0
 
     def __post_init__(self) -> None:
         try:
             from dotenv import load_dotenv
 
-            load_dotenv()
+            load_dotenv(Path.cwd() / ".env")
         except ImportError:
             pass
         self.api_key = self.api_key or os.getenv("LLM_API_KEY")
@@ -39,15 +41,16 @@ class OpenAIChatClient:
             raise ValueError("LLM_API_KEY is required unless dry-run mode or a custom LLM client is used")
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        self._client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
 
     def generate(self, prompt: str, system_prompt: str | None = None) -> str:
-        from openai import APIConnectionError, APIError, RateLimitError
+        from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 
         messages = [
             {"role": "system", "content": system_prompt or "You are a careful document assistant."},
             {"role": "user", "content": prompt},
         ]
+        last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
                 response = self._client.chat.completions.create(
@@ -58,13 +61,16 @@ class OpenAIChatClient:
                 )
                 content = response.choices[0].message.content
                 return (content or "").strip()
-            except RateLimitError:
+            except RateLimitError as exc:
+                last_error = exc
                 time.sleep(2 + attempt * 3)
-            except APIConnectionError:
+            except (APIConnectionError, APITimeoutError) as exc:
+                last_error = exc
                 time.sleep(1 + attempt * 2)
             except APIError as exc:
                 raise RuntimeError(f"LLM API error: {exc}") from exc
-        raise RuntimeError("LLM API request failed after retries")
+        detail = f": {last_error}" if last_error else ""
+        raise RuntimeError(f"LLM API request failed after retries{detail}")
 
 
 class DryRunClient:
