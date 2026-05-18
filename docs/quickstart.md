@@ -17,9 +17,16 @@ Create `.env` in the project root:
 ```env
 LLM_API_KEY=your_api_key_here
 LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
 ```
 
-LAMB uses an OpenAI-compatible chat API. DeepSeek, OpenAI-compatible gateways, and local compatible servers can be used by changing `LLM_BASE_URL`.
+LAMB uses an OpenAI-compatible chat API. DeepSeek, OpenAI-compatible gateways, and local compatible servers can be used by changing `LLM_BASE_URL` and `LLM_MODEL`.
+
+You can also override the model for one command:
+
+```bash
+lamb research data/inputs --question "这些文档的共同结论是什么？" --model gpt-4o-mini
+```
 
 ## Dry Run First
 

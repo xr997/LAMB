@@ -29,6 +29,7 @@ def process_file(
     output_dir: str = "data/outputs",
     output_format: str = "docx",
     llm_client: LLMClient | None = None,
+    model_name: str | None = None,
     dry_run: bool = False,
     strict_security: bool = False,
     redact: bool = False,
@@ -44,7 +45,7 @@ def process_file(
         size_bytes=path.stat().st_size if path.exists() else 0,
         supported=True,
     )
-    client = _resolve_client(llm_client, dry_run)
+    client = _resolve_client(llm_client, dry_run, model_name)
     output_root = ensure_output_dir(output_dir)
     return _process_record_mapping(
         record=record,
@@ -68,6 +69,7 @@ def process_directory(
     strict_security: bool = False,
     redact: bool = False,
     llm_client: LLMClient | None = None,
+    model_name: str | None = None,
     max_chars: int = 12000,
 ) -> BatchResult:
     """Process a directory in mapping or aggregation mode."""
@@ -86,6 +88,7 @@ def process_directory(
             strict_security=strict_security,
             redact=redact,
             llm_client=llm_client,
+            model_name=model_name,
             max_chars=max_chars,
         )
         files = extraction.files
@@ -108,7 +111,7 @@ def process_directory(
     timer = RunTimer()
     output_root = ensure_output_dir(output_dir)
     records = scan_documents(input_dir)
-    client = _resolve_client(llm_client, dry_run)
+    client = _resolve_client(llm_client, dry_run, model_name)
     results: List[FileResult] = []
     for record in records:
         if record.skipped or not record.supported:
@@ -171,6 +174,7 @@ def answer_over_directory(
     strict_security: bool = False,
     redact: bool = False,
     llm_client: LLMClient | None = None,
+    model_name: str | None = None,
     max_chars: int = 12000,
 ) -> QAResult:
     """Answer a question over all supported documents in a directory."""
@@ -179,7 +183,7 @@ def answer_over_directory(
     timer = RunTimer()
     output_root = ensure_output_dir(output_dir)
     records = scan_documents(input_dir)
-    client = _resolve_client(llm_client, dry_run)
+    client = _resolve_client(llm_client, dry_run, model_name)
     detector = PromptInjectionDetector()
     redactor = SensitiveDataRedactor()
     evidence_notes: List[str] = []
@@ -296,6 +300,7 @@ def extract_fields(
     strict_security: bool = False,
     redact: bool = False,
     llm_client: LLMClient | None = None,
+    model_name: str | None = None,
     max_chars: int = 12000,
 ) -> ExtractionResult:
     """Extract structured fields from each supported document."""
@@ -306,7 +311,7 @@ def extract_fields(
     timer = RunTimer()
     output_root = ensure_output_dir(output_dir)
     records = scan_documents(input_dir)
-    client = _resolve_client(llm_client, dry_run)
+    client = _resolve_client(llm_client, dry_run, model_name)
     detector = PromptInjectionDetector()
     redactor = SensitiveDataRedactor()
     rows: List[Dict[str, Any]] = []
@@ -454,12 +459,12 @@ def _process_record_mapping(
         return FileResult(record.path, None, False, str(exc))
 
 
-def _resolve_client(llm_client: LLMClient | None, dry_run: bool) -> LLMClient:
+def _resolve_client(llm_client: LLMClient | None, dry_run: bool, model_name: str | None = None) -> LLMClient:
     if llm_client is not None:
         return llm_client
     if dry_run:
         return DryRunClient()
-    return OpenAIChatClient()
+    return OpenAIChatClient(model_name=model_name)
 
 
 def _skipped_result(record: DocumentRecord) -> FileResult:
