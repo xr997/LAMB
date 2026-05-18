@@ -20,7 +20,7 @@ class LLMClient(Protocol):
 class OpenAIChatClient:
     """Small OpenAI-compatible chat client."""
 
-    model_name: str = "deepseek-chat"
+    model_name: str | None = None
     api_key: str | None = None
     base_url: str | None = None
     temperature: float = 0.1
@@ -35,6 +35,7 @@ class OpenAIChatClient:
             load_dotenv(Path.cwd() / ".env")
         except ImportError:
             pass
+        self.model_name = self.model_name or os.getenv("LLM_MODEL", "deepseek-chat")
         self.api_key = self.api_key or os.getenv("LLM_API_KEY")
         self.base_url = self.base_url or os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
         if not self.api_key:
