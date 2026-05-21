@@ -16,6 +16,36 @@ class CliTests(unittest.TestCase):
                 exit_code = main(["scan", str(root)])
             self.assertEqual(exit_code, 0)
 
+    def test_pipelines_command(self):
+        stdout = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(StringIO()):
+            exit_code = main(["pipelines"])
+        self.assertEqual(exit_code, 0)
+        self.assertIn("research", stdout.getvalue())
+        self.assertIn("secure-review", stdout.getvalue())
+
+    def test_plan_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root / "inputs"
+            inputs.mkdir()
+            stdout = StringIO()
+            with redirect_stdout(stdout), redirect_stderr(StringIO()):
+                exit_code = main(
+                    [
+                        "plan",
+                        str(inputs),
+                        "--goal",
+                        "抽取姓名、分数和评语，输出 CSV 表格",
+                        "--fields",
+                        "姓名,分数,评语",
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("Selected preset: extract", output)
+            self.assertIn("--fields", output)
+
     def test_research_dry_run_command(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from . import __version__
+from .llm import OpenAIChatClient
+from .pipelines import (
+    build_pipeline_plan,
+    customize_pipeline_plan,
+    list_pipeline_presets,
+    render_pipeline_catalog,
+    render_pipeline_plan,
+)
 from .scanning import scan_documents, summarize_scan
 from .workflow import answer_over_directory, extract_fields, process_directory
 
@@ -20,6 +29,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "scan":
             return _cmd_scan(args)
+        if args.command == "pipelines":
+            return _cmd_pipelines(args)
+        if args.command == "plan":
+            return _cmd_plan(args)
         if args.command == "research":
             return _cmd_research(args)
         if args.command == "extract":
@@ -36,7 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lamb",
-        description="Local-first safe LLM assistant for multi-document research and batch processing.",
+        description="Trusted AI assistant for automated batch processing of file folders.",
     )
     parser.add_argument("--version", action="version", version=f"LAMB {__version__}")
     subparsers = parser.add_subparsers(dest="command")
@@ -47,6 +60,26 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--max-file-size-mb", type=int, default=50)
     scan.add_argument("--hash", action="store_true", help="Compute SHA-256 for supported files.")
     scan.set_defaults(command="scan")
+
+    pipelines = subparsers.add_parser("pipelines", help="List built-in pipeline presets.")
+    pipelines.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    pipelines.set_defaults(command="pipelines")
+
+    preset_names = ["auto"] + [preset.name for preset in list_pipeline_presets()]
+    plan = subparsers.add_parser("plan", help="Build a pipeline plan before calling an LLM.")
+    plan.add_argument("input_dir")
+    plan.add_argument("--goal", required=True, help="Natural-language goal, question, or instruction.")
+    plan.add_argument("--preset", choices=preset_names, default="auto", help="Pipeline preset to use. Defaults to auto.")
+    plan.add_argument("--fields", help="Comma-separated extraction fields for extract plans.")
+    plan.add_argument("--output-dir", default="data/outputs")
+    plan.add_argument("--include-hidden", action="store_true", help="Include hidden files and folders in the suggested command.")
+    plan.add_argument("--strict-security", action="store_true", help="Skip high-risk prompt-injection documents in the suggested command.")
+    plan.add_argument("--redact", action="store_true", help="Redact common sensitive values in the suggested command.")
+    plan.add_argument("--model", help="OpenAI-compatible model name to include in the suggested command.")
+    plan.add_argument("--max-chars", type=int, default=12000, help="Maximum characters per LLM chunk.")
+    plan.add_argument("--ai-customize", action="store_true", help="Use the configured LLM to tailor the plan before confirmation.")
+    plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    plan.set_defaults(command="plan")
 
     research = subparsers.add_parser("research", help="Answer a question over a folder of documents.")
     research.add_argument("input_dir")
@@ -100,6 +133,38 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         status = "OK" if record.supported and not record.skipped else "SKIP"
         reason = f" - {record.skip_reason}" if record.skip_reason else ""
         print(f"  [{status}] {record.relative_path} ({record.extension or 'no-ext'}, {record.size_bytes} bytes){reason}")
+    return 0
+
+
+def _cmd_pipelines(args: argparse.Namespace) -> int:
+    presets = list_pipeline_presets()
+    if args.json:
+        print(json.dumps([preset.to_dict() for preset in presets], ensure_ascii=False, indent=2))
+    else:
+        print(render_pipeline_catalog(presets))
+    return 0
+
+
+def _cmd_plan(args: argparse.Namespace) -> int:
+    fields = _parse_fields(args.fields) if args.fields else []
+    plan = build_pipeline_plan(
+        input_dir=args.input_dir,
+        goal=args.goal,
+        preset_name=args.preset,
+        output_dir=args.output_dir,
+        fields=fields,
+        strict_security=args.strict_security,
+        redact=args.redact,
+        include_hidden=args.include_hidden,
+        model_name=args.model,
+        max_chars=args.max_chars,
+    )
+    if args.ai_customize:
+        plan = customize_pipeline_plan(plan, OpenAIChatClient(model_name=args.model))
+    if args.json:
+        print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(render_pipeline_plan(plan))
     return 0
 
 

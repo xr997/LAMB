@@ -25,8 +25,8 @@ class OpenAIChatClient:
     base_url: str | None = None
     temperature: float = 0.1
     max_tokens: int = 4096
-    max_retries: int = 3
-    timeout: float = 60.0
+    max_retries: int = 5
+    timeout: float = 90.0
 
     def __post_init__(self) -> None:
         try:

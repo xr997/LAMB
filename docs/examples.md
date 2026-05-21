@@ -2,6 +2,18 @@
 
 LAMB 的示例场景刻意保持日常化，方便评委和用户快速理解。
 
+建议先用 `lamb plan` 把一句话目标转换为可确认的文件批处理计划：
+
+```bash
+lamb plan data/homework --goal "抽取姓名、分数、评语和主要问题，输出 CSV 表格"
+```
+
+如果任务需要更细的处理步骤，可以让已配置的大模型定制计划：
+
+```bash
+lamb plan data/homework --goal "生成作业批改表，并总结学生常见问题" --ai-customize --redact
+```
+
 ## 批量批改作业
 
 ```bash

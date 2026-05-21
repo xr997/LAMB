@@ -30,10 +30,27 @@ lamb research data/inputs --question "这些文档的共同结论是什么？" -
 
 ## Dry Run First
 
-Dry-run mode does not call an LLM. It is useful for checking scanned files and output paths.
+Start by listing the built-in pipeline presets and generating a plan from a one-sentence goal:
 
 ```bash
 lamb scan data/inputs
+lamb pipelines
+lamb plan data/inputs --goal "抽取学生姓名、分数、评语和主要问题，输出 CSV 表格"
+```
+
+`lamb plan` does not call an LLM by default. It infers a preset, shows the pipeline steps, suggests a runnable command, and lists confirmation questions.
+
+Use AI-customized planning when the task needs a more specific workflow checklist:
+
+```bash
+lamb plan data/inputs --goal "生成作业批改表，并总结学生常见问题" --ai-customize --redact
+```
+
+`--ai-customize` calls the configured OpenAI-compatible model to tailor the displayed steps and confirmation questions. Execution still uses LAMB's safety-aware workflow commands.
+
+Dry-run mode also does not call an LLM. It is useful for checking scanned files and output paths.
+
+```bash
 lamb research data/inputs --question "这些文档的共同结论是什么？" --dry-run
 ```
 

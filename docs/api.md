@@ -18,6 +18,31 @@ for record in records:
 
 Set `include_hidden=True` when a workflow should process intentional hidden notes or project folders. Sensitive names such as `.env` are still refused.
 
+## Pipeline Planning
+
+```python
+from lamb import build_pipeline_plan, customize_pipeline_plan, list_pipeline_presets, render_pipeline_plan
+from lamb.llm import OpenAIChatClient
+
+for preset in list_pipeline_presets():
+    print(preset.name, preset.title)
+
+plan = build_pipeline_plan(
+    input_dir="data/inputs",
+    goal="抽取学生姓名、分数、评语和主要问题，输出 CSV 表格",
+    fields=["姓名", "分数", "评语", "主要问题"],
+    redact=True,
+)
+
+print(plan.command)
+print(render_pipeline_plan(plan))
+
+customized = customize_pipeline_plan(plan, OpenAIChatClient())
+print(render_pipeline_plan(customized))
+```
+
+Use pipeline planning when an application needs to preview or confirm a workflow before sending document content to an LLM. `build_pipeline_plan()` is local and deterministic; `customize_pipeline_plan()` calls the configured LLM to tailor the displayed steps and confirmation checklist.
+
 ## Multi-document Research
 
 ```python
