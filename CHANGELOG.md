@@ -1,8 +1,15 @@
 # Changelog
 
+## v0.4.3 - 2026-05-23
+
+- Clean up legacy prototype directories after migrating their useful MCP idea into the current `lamb` package.
+- Add `lamb mcp` to expose planning, research QA, field extraction, and batch processing as MCP tools.
+- Make research QA more resilient to transient LLM failures by falling back to local evidence excerpts and fallback reports while recording the fallback in manifests.
+- Keep README and API docs aligned with one-sentence automation, AI-customized planning, human confirmation, safety, and MCP integration.
+
 ## v0.4.0 - 2026-05-18
 
-- Reposition LAMB as a local-first safe multi-document research assistant.
+- Reposition LAMB as a safety-aware multi-document research assistant.
 - Add installable `lamb-batch` Python package and `lamb` CLI.
 - Add public SDK APIs for scanning, research QA, structured extraction, and batch processing.
 - Add prompt injection detection, optional sensitive-data redaction, strict security mode, and path safety checks.

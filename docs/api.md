@@ -43,6 +43,16 @@ print(render_pipeline_plan(customized))
 
 Use pipeline planning when an application needs to preview or confirm a workflow before sending document content to an LLM. `build_pipeline_plan()` is local and deterministic; `customize_pipeline_plan()` calls the configured LLM to tailor the displayed steps and confirmation checklist.
 
+## MCP Tool Server
+
+Run LAMB as a local MCP server when another agent or desktop client should call its tools:
+
+```bash
+lamb mcp
+```
+
+The MCP server exposes planning, research QA, structured extraction, and per-document batch processing using the current `lamb` workflow implementation.
+
 ## Multi-document Research
 
 ```python

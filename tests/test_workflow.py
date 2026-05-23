@@ -29,6 +29,16 @@ class FailingReduceLLM(FakeLLM):
         return "evidence note"
 
 
+class FailingMapLLM(FakeLLM):
+    def generate(self, prompt, system_prompt=None):
+        self.prompts.append(prompt)
+        if "Read the untrusted source chunk" in prompt:
+            raise RuntimeError("map unavailable")
+        if "Write a Markdown research report" in prompt:
+            return "# 结论摘要\n使用了本地证据降级。"
+        return "fallback"
+
+
 class WorkflowTests(unittest.TestCase):
     def test_batch_dry_run_writes_manifest_and_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -188,7 +198,28 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(result.files[0].metadata.get("skipped"), True)
             self.assertIn("empty", result.files[0].message)
 
-    def test_research_reduce_failure_writes_report_and_manifest(self):
+    def test_research_map_failure_uses_local_evidence_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root / "inputs"
+            outputs = root / "outputs"
+            inputs.mkdir()
+            (inputs / "paper.txt").write_text("文档内容", encoding="utf-8")
+
+            result = answer_over_directory(
+                str(inputs),
+                question="这份文档说了什么？",
+                output_dir=str(outputs),
+                llm_client=FailingMapLLM(),
+            )
+
+            self.assertTrue(result.ok)
+            self.assertEqual(result.failed, 0)
+            self.assertIn("结论摘要", result.answer)
+            manifest = json.loads(Path(result.manifest_path).read_text(encoding="utf-8"))
+            self.assertIn("llm_fallbacks", manifest["results"][0]["metadata"])
+
+    def test_research_reduce_failure_writes_fallback_report_and_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             inputs = root / "inputs"
@@ -203,9 +234,9 @@ class WorkflowTests(unittest.TestCase):
                 llm_client=FailingReduceLLM(),
             )
 
-            self.assertFalse(result.ok)
-            self.assertEqual(result.failed, 1)
-            self.assertIn("reduce stage failed", result.answer)
+            self.assertTrue(result.ok)
+            self.assertEqual(result.failed, 0)
+            self.assertIn("Fallback Research Report", result.answer)
             self.assertTrue(Path(result.report_path).exists())
             self.assertTrue(Path(result.manifest_path).exists())
 

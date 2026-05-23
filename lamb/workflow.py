@@ -19,7 +19,7 @@ from .prompts import (
     build_research_map_prompt,
     build_research_reduce_prompt,
 )
-from .scanning import scan_documents, supported_records
+from .scanning import scan_documents
 from .security import PromptInjectionDetector, SensitiveDataRedactor, format_findings, has_high_risk_findings
 from .writers import ensure_output_dir, safe_stem, write_content, write_csv, write_json, write_output_index, write_text
 
@@ -247,20 +247,28 @@ def answer_over_directory(
             if dry_run:
                 evidence_notes.append(_dry_run_evidence(record, prepared.chunks, prepared.findings))
             else:
+                llm_fallbacks: List[str] = []
                 for chunk in prepared.chunks:
                     prompt = build_research_map_prompt(question, chunk, prepared.findings)
-                    note = client.generate(prompt)
+                    try:
+                        note = client.generate(prompt)
+                    except Exception as exc:
+                        llm_fallbacks.append(f"{chunk.label}: {exc}")
+                        note = _fallback_evidence_note(chunk, exc)
                     if note and "NO_RELEVANT_EVIDENCE" not in note:
                         evidence_notes.append(f"### {chunk.label}\n{note}")
             sources.append(record.relative_path)
+            metadata = {"chunks": len(prepared.chunks), "tokens_estimate": prepared.tokens_estimate}
+            if not dry_run and llm_fallbacks:
+                metadata["llm_fallbacks"] = llm_fallbacks
             file_results.append(
                 FileResult(
                     input_path=record.path,
                     output_path=None,
                     success=True,
-                    message=f"processed {len(prepared.chunks)} chunk(s)",
+                    message=_processed_message(len(prepared.chunks), 0 if dry_run else len(llm_fallbacks)),
                     findings=prepared.findings,
-                    metadata={"chunks": len(prepared.chunks), "tokens_estimate": prepared.tokens_estimate},
+                    metadata=metadata,
                 )
             )
         except Exception as exc:
@@ -272,14 +280,14 @@ def answer_over_directory(
         try:
             answer = client.generate(build_research_reduce_prompt(question, evidence_notes))
         except Exception as exc:
-            answer = f"LLM reduce stage failed: {exc}"
+            answer = _fallback_research_report(question, sources, evidence_notes, skipped_files, exc)
             file_results.append(
                 FileResult(
                     input_path="<research-reduce>",
                     output_path=None,
-                    success=False,
-                    message=str(exc),
-                    metadata={"stage": "reduce"},
+                    success=True,
+                    message=f"LLM reduce stage failed; wrote fallback report: {exc}",
+                    metadata={"stage": "reduce", "llm_fallback": True},
                 )
             )
     else:
@@ -568,6 +576,24 @@ def _dry_run_evidence(record: DocumentRecord, chunks: Sequence[Any], findings: S
     return f"### {record.relative_path}\nDRY RUN: would process {len(chunks)} chunk(s). Security findings: {risk}."
 
 
+def _fallback_evidence_note(chunk: TextChunk, exc: Exception) -> str:
+    excerpt = chunk.text.strip().replace("\n", " ")
+    if len(excerpt) > 1200:
+        excerpt = excerpt[:1200] + "..."
+    return (
+        "LLM evidence extraction failed for this chunk, so LAMB used a local evidence excerpt instead.\n"
+        f"Failure: {exc}\n"
+        f"Fallback excerpt: {excerpt}"
+    )
+
+
+def _processed_message(chunks: int, llm_fallbacks: int = 0) -> str:
+    message = f"processed {chunks} chunk(s)"
+    if llm_fallbacks:
+        message += f" with {llm_fallbacks} local evidence fallback(s)"
+    return message
+
+
 def _dry_run_research_report(question: str, sources: Sequence[str], evidence: Sequence[str], skipped: Sequence[str]) -> str:
     source_lines = "\n".join(f"- {source}" for source in sources) or "- 无"
     skipped_lines = "\n".join(f"- {source}" for source in skipped) or "- 无"
@@ -584,6 +610,37 @@ def _dry_run_research_report(question: str, sources: Sequence[str], evidence: Se
 {skipped_lines}
 
 ## Planned Evidence Notes
+{evidence_preview}
+"""
+
+
+def _fallback_research_report(
+    question: str,
+    sources: Sequence[str],
+    evidence: Sequence[str],
+    skipped: Sequence[str],
+    exc: Exception,
+) -> str:
+    source_lines = "\n".join(f"- {source}" for source in sources) or "- none"
+    skipped_lines = "\n".join(f"- {source}" for source in skipped) or "- none"
+    evidence_preview = "\n\n".join(evidence) or "none"
+    return f"""# LAMB Fallback Research Report
+
+## Question
+{question}
+
+## Why This Fallback Was Used
+The LLM reduce stage failed after retries, so LAMB preserved the collected evidence notes instead of dropping the run.
+
+Failure: {exc}
+
+## Sources
+{source_lines}
+
+## Skipped Files
+{skipped_lines}
+
+## Evidence Notes
 {evidence_preview}
 """
 

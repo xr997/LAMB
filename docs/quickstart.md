@@ -48,6 +48,12 @@ lamb plan data/inputs --goal "生成作业批改表，并总结学生常见问�
 
 `--ai-customize` calls the configured OpenAI-compatible model to tailor the displayed steps and confirmation questions. Execution still uses LAMB's safety-aware workflow commands.
 
+Expose LAMB to an MCP-compatible agent or desktop client:
+
+```bash
+lamb mcp
+```
+
 Dry-run mode also does not call an LLM. It is useful for checking scanned files and output paths.
 
 ```bash

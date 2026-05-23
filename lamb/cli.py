@@ -33,6 +33,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_pipelines(args)
         if args.command == "plan":
             return _cmd_plan(args)
+        if args.command == "mcp":
+            return _cmd_mcp(args)
         if args.command == "research":
             return _cmd_research(args)
         if args.command == "extract":
@@ -80,6 +82,10 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--ai-customize", action="store_true", help="Use the configured LLM to tailor the plan before confirmation.")
     plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     plan.set_defaults(command="plan")
+
+    mcp = subparsers.add_parser("mcp", help="Run LAMB as an MCP tool server.")
+    mcp.add_argument("--transport", choices=["stdio"], default="stdio", help="MCP transport to use.")
+    mcp.set_defaults(command="mcp")
 
     research = subparsers.add_parser("research", help="Answer a question over a folder of documents.")
     research.add_argument("input_dir")
@@ -165,6 +171,13 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
     else:
         print(render_pipeline_plan(plan))
+    return 0
+
+
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    from .mcp_server import run_mcp_server
+
+    run_mcp_server(transport=args.transport)
     return 0
 
 

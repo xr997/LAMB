@@ -50,6 +50,7 @@ The core method combines four pieces:
 - **AI-customized pipeline**: `lamb plan --ai-customize` can call your configured LLM to tailor the plan, steps, and confirmation questions to the specific task.
 - **Human confirmation**: the plan highlights decisions that should be checked before execution, such as fields, rubric, redaction, strict security, and hidden-file scope.
 - **Safety-first execution**: documents are wrapped as untrusted evidence, prompt-injection signals are detected, sensitive values can be redacted, and every run is audited.
+- **MCP integration**: `lamb mcp` exposes LAMB as tools for compatible agents and desktop clients.
 
 This gives LAMB an agent-like workflow without hiding the operational details from the user.
 
@@ -62,6 +63,7 @@ This gives LAMB an agent-like workflow without hiding the operational details fr
 | Preset planning | `lamb plan data/inputs --goal "..."` | Fast local plan generation without LLM calls |
 | AI customization | `lamb plan data/inputs --goal "..." --ai-customize` | Uses the configured LLM to tailor steps and confirmation questions |
 | Machine-readable planning | `lamb plan data/inputs --goal "..." --json` | Lets other programs consume the plan |
+| MCP tool server | `lamb mcp` | Exposes planning, research, extraction, and batch workflows to MCP clients |
 
 Example:
 
@@ -87,6 +89,12 @@ List presets:
 
 ```bash
 lamb pipelines
+```
+
+Run LAMB as an MCP server:
+
+```bash
+lamb mcp
 ```
 
 ---

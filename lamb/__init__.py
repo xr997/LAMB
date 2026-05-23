@@ -1,6 +1,7 @@
 """LAMB: trusted AI assistant for automated folder-level file processing."""
 
 from .models import BatchResult, DocumentRecord, ExtractionResult, FileResult, QAResult, SecurityFinding
+from .mcp_server import create_mcp_server
 from .pipelines import (
     PipelinePlan,
     PipelinePreset,
@@ -29,6 +30,7 @@ __all__ = [
     "SecurityFinding",
     "answer_over_directory",
     "build_pipeline_plan",
+    "create_mcp_server",
     "customize_pipeline_plan",
     "extract_fields",
     "get_pipeline_preset",
@@ -40,4 +42,4 @@ __all__ = [
     "scan_documents",
 ]
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"

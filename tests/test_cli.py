@@ -4,7 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from lamb.cli import main
+from lamb.cli import build_parser, main
 
 
 class CliTests(unittest.TestCase):
@@ -23,6 +23,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("research", stdout.getvalue())
         self.assertIn("secure-review", stdout.getvalue())
+
+    def test_help_lists_mcp_command(self):
+        self.assertIn("mcp", build_parser().format_help())
 
     def test_plan_command(self):
         with tempfile.TemporaryDirectory() as tmp:
